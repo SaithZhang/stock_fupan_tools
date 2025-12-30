@@ -1,11 +1,6 @@
 # ==============================================================================
-# 📌 3. F佬/Bo佬 智能盘中监控系统 (monitor_bid.py) - 炸板雷达版
+# 📌 3. F佬/Bo佬 智能盘中监控系统 (monitor_bid.py) - 收官战最终版
 # ==============================================================================
-# 新增功能：
-# 1. [炸板检测]：如果曾触及涨停但回落，显示"💥炸板"，提示风险。
-# 2. [吸血效应]：如果机器人板块强，但你的票（非机器人）在跌，提示"被吸血"。
-# ==============================================================================
-
 import requests
 import pandas as pd
 import time
@@ -15,7 +10,7 @@ from colorama import init, Fore, Style, Back
 init(autoreset=True)
 
 CSV_PATH = 'strategy_pool.csv'
-HOT_TOPICS = ["机器人", "航天", "AI"]
+HOT_TOPICS = ["机器人", "航天", "AI", "消费电子"]
 
 
 def load_strategy_pool():
@@ -35,13 +30,11 @@ def load_strategy_pool():
 def get_market_sentiment(pool_data):
     high_tier_count = 0
     crash_count = 0
-    broken_limit_count = 0  # 炸板数量
+    broken_limit_count = 0
 
     for code, data in pool_data.items():
-        # 计算炸板：最高价接近涨停(>9.5%)，但现价回落( <9.0%)
         if data['max_pct'] > 9.5 and data['pct'] < 9.0:
             broken_limit_count += 1
-
         if '板' in data['tag']:
             high_tier_count += 1
             if data['pct'] < -5: crash_count += 1
@@ -75,13 +68,13 @@ def fetch_sina_data(sina_codes):
                 open_p = float(data_list[1])
                 pre_c = float(data_list[2])
                 curr_p = float(data_list[3])
-                high_p = float(data_list[4])  # 最高价
+                high_p = float(data_list[4])
 
                 if curr_p == 0: curr_p = open_p if open_p > 0 else pre_c
 
                 pct = (curr_p - pre_c) / pre_c * 100 if pre_c > 0 else 0
                 open_pct = (open_p - pre_c) / pre_c * 100 if pre_c > 0 and open_p > 0 else 0
-                max_pct = (high_p - pre_c) / pre_c * 100 if pre_c > 0 else 0  # 最高涨幅
+                max_pct = (high_p - pre_c) / pre_c * 100 if pre_c > 0 else 0
 
                 parsed_data[code] = {
                     'curr_p': curr_p, 'pre_c': pre_c, 'pct': pct,
@@ -115,25 +108,23 @@ def monitor_loop(pool):
     os.system('cls' if os.name == 'nt' else 'clear')
     curr_time = time.strftime('%H:%M:%S')
 
-    # 标题栏优化
     title_text = f"🔥 F佬/Bo佬 盘中作战室 | {curr_time} | "
     if sentiment == "CRASH":
         title_text += f"{Fore.RED}🛑 退潮 (核按钮:{crash_n}){Style.RESET_ALL}"
     else:
         title_text += f"{Fore.GREEN}✅ 情绪稳 (核按钮:{crash_n}){Style.RESET_ALL}"
 
-    # 炸板警报
     if broken_n > 3:
         title_text += f" | {Back.RED}{Fore.WHITE}⚠️ 炸板潮 ({broken_n}家){Style.RESET_ALL}"
     else:
         title_text += f" | 炸板: {broken_n}家"
 
-    print("=" * 125)
+    print("=" * 130)
     print(title_text)
-    print("=" * 125)
+    print("=" * 130)
     print(
-        f"{'名称':<8} {'标签(紫底=双概念)':<18} {'涨幅':<12} {'现价':<8} {'今开%':<8} {'大哥联动':<12} {'最高%':<8} {'AI决策建议'}")
-    print("-" * 125)
+        f"{'名称':<8} {'标签(紫底=双概念)':<18} {'涨幅':<12} {'现价':<8} {'今开%':<8} {'大哥联动':<12} {'最高%':<8} {'量比':<8} {'AI决策建议'}")
+    print("-" * 130)
 
     for item in pool:
         code = item['sina_code']
@@ -143,9 +134,13 @@ def monitor_loop(pool):
         tag = item.get('tag', '-')
         pct = item['pct']
         open_pct = item['open_pct']
-        max_pct = item['max_pct']  # 最高涨幅
+        max_pct = item['max_pct']
         curr_p = item['curr_p']
-        yesterday_vol = float(item.get('vol', 1))
+
+        # 计算量比 (需要CSV里有vol且非0)
+        yesterday_vol = float(item.get('vol', 0))
+        current_vol = real_time_data[code]['vol']
+        vol_ratio = (current_vol / yesterday_vol * 100) if yesterday_vol > 0 else 0
 
         # --- 1. 标签渲染 ---
         hit_count = sum(1 for topic in HOT_TOPICS if topic in tag)
@@ -172,11 +167,18 @@ def monitor_loop(pool):
         else:
             open_str = f"{Fore.RED}{open_str}{Style.RESET_ALL}"
 
-        # --- 3. 决策逻辑 (引入f哥复盘) ---
+        # 量比颜色
+        ratio_str = f"{vol_ratio:.0f}%"
+        if vol_ratio > 100:
+            ratio_str = f"{Fore.MAGENTA}{ratio_str}{Style.RESET_ALL}"
+        elif vol_ratio > 60:
+            ratio_str = f"{Fore.YELLOW}{ratio_str}{Style.RESET_ALL}"
+
+        # --- 3. 决策逻辑 ---
         decision = ""
         link_info = "-"
 
-        # A. 炸板检测 (新增)
+        # A. 炸板检测
         is_broken_limit = (max_pct > 9.5 and pct < 9.0)
 
         # B. 大哥联动
@@ -186,7 +188,6 @@ def monitor_loop(pool):
             d_pct = real_time_data[dragon_code]['pct']
             d_max = real_time_data[dragon_code]['max_pct']
 
-            # 大哥炸板检测
             if d_max > 9.5 and d_pct < 9.0:
                 link_info = f"{Back.YELLOW}{Fore.BLACK}大哥炸板{Style.RESET_ALL}"
             elif d_pct > 9.5:
@@ -195,26 +196,53 @@ def monitor_loop(pool):
             elif d_pct < -5:
                 link_info = f"{Fore.GREEN}大哥大跌{Style.RESET_ALL}"
 
+        # ... (在 C. 决策生成 之前插入) ...
+
+        # --- [新增] 弱转强判定逻辑 ---
+        is_weak_to_strong = False
+        wts_msg = ""
+
+        # 1. 识别昨天的弱势股
+        is_rotten = '烂' in tag or '炸' in tag  # 昨天烂板或炸板
+        is_drop = '跌' in tag  # 昨天跌停
+
+        # 2. 判定今日竞价是否超预期
+        if is_rotten:
+            # 烂板/炸板，今天高开 > 1% 就算弱转强
+            if open_pct > 1.0:
+                is_weak_to_strong = True
+                wts_msg = "🔥弱转强(高开)"
+        elif is_drop:
+            # 跌停股，今天只要红开 > 0% 就算弱转强 (如世宝)
+            if open_pct > 0:
+                is_weak_to_strong = True
+                wts_msg = "🔥弱转强(反核)"
+
+        # 3. 针对F佬说的御银股份 (连板龙头的分歧转一致)
+        # 如果是强势连板，但今天开盘分歧(比如低开或平开)，现在拉红了
+        if '板' in tag and '烂' not in tag and '炸' not in tag:
+            # 昨天硬板，今天开盘弱(<=2%)，但现在拉起来了(>5%)
+            if open_pct < 2.0 and pct > 5.0:
+                is_weak_to_strong = True
+                wts_msg = "🚀分歧转一致"
+
         # C. 决策生成
         if pct > 9.8:
             decision = f"{Fore.RED}{Style.BRIGHT}封板锁仓{Style.RESET_ALL}"
         elif pct < -9.8:
             decision = f"{Fore.GREEN}跌停不动{Style.RESET_ALL}"
-
-        # 炸板处理
+            # [插入] 弱转强 优先级很高，放在涨跌停判断之后
+        elif is_weak_to_strong:
+            decision = f"{Fore.RED}{Style.BRIGHT}{wts_msg}{Style.RESET_ALL}"
         elif is_broken_limit:
             decision = f"{Fore.MAGENTA}💥炸板!减仓防守{Style.RESET_ALL}"
-
-        # 大哥炸板，小弟快跑
         elif "大哥炸板" in link_info:
             decision = f"{Fore.RED}⚠️大哥炸了-快跑{Style.RESET_ALL}"
-
         elif dragon_is_strong:
             decision = f"{Fore.MAGENTA}✅跟随大哥(持有){Style.RESET_ALL}"
         else:
-            # 持仓逻辑
             if '持仓' in tag:
-                # 明日特供：节前效应，冲高止盈
+                # 节前止盈策略
                 if pct > 5 and not dragon_is_strong:
                     decision = f"{Fore.RED}节前止盈(卖){Style.RESET_ALL}"
                 elif open_pct < -2 and pct < -2:
@@ -228,9 +256,9 @@ def monitor_loop(pool):
                 decision = "观察"
 
         print(
-            f"{name:<8} {tag_display:<26} {pct_str:<20} {curr_p:<8} {open_str:<8} {link_info:<16} {max_pct:<8.1f} {decision}")
+            f"{name:<8} {tag_display:<26} {pct_str:<20} {curr_p:<8} {open_str:<8} {link_info:<16} {max_pct:<8.1f} {ratio_str:<10} {decision}")
 
-    print("=" * 125)
+    print("=" * 130)
 
 
 if __name__ == "__main__":
