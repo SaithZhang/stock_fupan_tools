@@ -6,6 +6,7 @@ import pandas as pd
 import time
 import os
 from colorama import init, Fore, Style, Back
+import re
 
 init(autoreset=True)
 
@@ -261,10 +262,114 @@ def monitor_loop(pool):
     print("=" * 130)
 
 
+def load_ths_clipboard_to_df():
+    """
+    [新增] 读取同花顺剪贴板文件，并转换为与 strategy_pool.csv 相同的 DataFrame 格式
+    """
+    file_path = 'ths_clipboard.txt'
+    if not os.path.exists(file_path):
+        return pd.DataFrame()  # 空表
+
+    print(f"{Fore.MAGENTA}📋 发现同花顺临时池，正在加载...{Fore.RESET}")
+
+    new_rows = []
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        for line in lines:
+            line = line.strip()
+            if not line or "代码" in line: continue  # 跳过空行和表头
+
+            # 使用正则拆分（处理不定长空格）
+            parts = re.split(r'\s+', line)
+            if len(parts) < 2: continue
+
+            raw_code = parts[0]  # 如 SZ300045
+            name = parts[1]  # 如 华力创通
+
+            # 1. 代码清洗：SZ300045 -> sz300045 (新浪接口格式)
+            sina_code = raw_code.lower()
+            # 2. 提取纯数字代码用于去重：300045
+            pure_code = re.sub(r'\D', '', raw_code)
+
+            # 3. 构造数据行 (字段要和 CSV 保持一致，没有的填默认值)
+            # CSV列名参考: sina_code,name,tag,today_pct,open_pct,price,pct_10,link_dragon,vol,code
+            new_rows.append({
+                'sina_code': sina_code,
+                'name': name,
+                'tag': f"午盘/观察/{name}",  # 给个特殊的紫色标签
+                'today_pct': 0,  # 初始值，稍后会实时获取
+                'open_pct': 0,
+                'price': 0,
+                'pct_10': 0,
+                'link_dragon': '',  # 临时加的就不配大哥了
+                'vol': 0,
+                'code': pure_code
+            })
+
+        if new_rows:
+            return pd.DataFrame(new_rows)
+        else:
+            return pd.DataFrame()
+
+    except Exception as e:
+        print(f"{Fore.RED}❌ 读取临时文件失败: {e}{Fore.RESET}")
+        return pd.DataFrame()
+
+def load_strategy_pool():
+    """
+    [核心加载逻辑] CSV策略池 + TXT临时池 混合加载
+    """
+    print("正在加载策略池...")
+
+    # 1. 读取主策略 CSV
+    if os.path.exists('strategy_pool.csv'):
+        df_main = pd.read_csv('strategy_pool.csv', dtype={'code': str})
+    else:
+        df_main = pd.DataFrame()
+
+    # 2. 读取同花顺 TXT
+    df_ths = load_ths_clipboard_to_df()
+
+    # 3. 合并 (如果两个都有数据)
+    if not df_ths.empty:
+        if not df_main.empty:
+            # 关键：去重！如果 CSV 里已经有了，就不要加 TXT 的了
+            # 使用 'code' 列作为去重基准
+            existing_codes = set(df_main['code'].astype(str).tolist())
+
+            # 只保留 CSV 里没有的
+            df_ths = df_ths[~df_ths['code'].isin(existing_codes)]
+
+            # 合并
+            df_final = pd.concat([df_main, df_ths], ignore_index=True)
+            print(f"✅ 合并加载: 策略池 {len(df_main)} + 临时池 {len(df_ths)} = {len(df_final)} 只")
+        else:
+            df_final = df_ths
+            print(f"⚠️ 未找到CSV，仅加载临时池 {len(df_final)} 只")
+    else:
+        df_final = df_main
+        print(f"✅ 仅加载策略池 {len(df_final)} 只")
+
+    return df_final
+
+
 if __name__ == "__main__":
     print(f"{Fore.CYAN}正在加载策略池...{Style.RESET_ALL}")
-    pool = load_strategy_pool()
-    if pool:
+
+    # 1. 获取 DataFrame 数据 (包含 CSV 和 同花顺剪贴板)
+    df_pool = load_strategy_pool()
+
+    if not df_pool.empty:
+        # 2. 数据清洗 (防止空值报错)
+        if 'link_dragon' not in df_pool.columns:
+            df_pool['link_dragon'] = ""
+        df_pool['link_dragon'] = df_pool['link_dragon'].fillna('')
+
+        # 3. 关键步骤：转换为字典列表 (monitor_loop 需要这个格式)
+        pool = df_pool.to_dict('records')
+
         print(f"监控启动: {len(pool)} 只标的 (按 Ctrl+C 退出)...")
         try:
             while True:
@@ -272,3 +377,5 @@ if __name__ == "__main__":
                 time.sleep(3)
         except KeyboardInterrupt:
             print("\n监控结束")
+    else:
+        print(f"{Fore.RED}错误: 策略池为空！请检查 strategy_pool.csv 或 ths_clipboard.txt{Style.RESET_ALL}")
