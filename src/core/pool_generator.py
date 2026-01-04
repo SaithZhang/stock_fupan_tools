@@ -1,5 +1,5 @@
 # ==============================================================================
-# 📌 1. F佬/Bo佬 离线复盘生成器 (fupan_generator.py) - V4.0 全量概念增强版
+# 📌 1. F佬/Bo佬 离线复盘生成器 (src/core/pool_generator.py) - V4.1 路径增强版
 # ==============================================================================
 
 import akshare as ak
@@ -20,11 +20,28 @@ if sys.platform == 'win32':
 
 init(autoreset=True)
 
-# ================= ⚙️ 配置区 =================
+# ================= ⚙️ 路径配置 (自动定位) =================
+# 获取当前脚本所在目录 (src/core)
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+# 向推两级找到项目根目录 (stock_fupan_tools)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
+
+# 定义绝对路径
+HOLDINGS_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'holdings.txt')
+THS_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'ths_clipboard.txt')
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'data', 'output')
+ARCHIVE_DIR = os.path.join(OUTPUT_DIR, 'archive')
+
+# 确保输出目录存在
+os.makedirs(ARCHIVE_DIR, exist_ok=True)
+
+print(f"{Fore.CYAN}🔧 项目根目录定位: {PROJECT_ROOT}")
+
+# ================= ⚙️ 策略配置区 =================
 
 TARGET_DATE = "today"
 
-# 🔥 定义我们要重点捕获的概念关键词（只要股票有这些概念，就自动追加到标签）
+# 🔥 定义我们要重点捕获的概念关键词
 CORE_KEYWORDS = [
     '机器人', '航天', '军工', '卫星', '低空',
     'AI', '人工智能', '智能体', '算力', 'CPO', '存储',
@@ -82,7 +99,7 @@ LINK_DRAGON_MAP = {
 CONCEPT_CACHE = {}
 
 
-# ========================================================================
+# ================= 🛠️ 工具函数 =================
 
 def get_target_date_str():
     if TARGET_DATE == "today":
@@ -108,15 +125,14 @@ def get_link_dragon(code):
     return ''
 
 
-# 🔥 新增：获取股票核心概念
 def get_core_concepts(code, name):
+    """获取股票核心概念"""
     if code in CONCEPT_CACHE:
         return CONCEPT_CACHE[code]
 
     matched_concepts = set()
     try:
         # 获取个股所属概念板块 (东方财富接口)
-        # 注意：频繁调用可能会慢，所以加了缓存
         df = ak.stock_board_concept_name_em(symbol=code)
         if df is not None and not df.empty:
             all_concepts = df['板块名称'].tolist()
@@ -124,11 +140,10 @@ def get_core_concepts(code, name):
             for c in all_concepts:
                 for key in CORE_KEYWORDS:
                     if key in c:
-                        matched_concepts.add(c)  # 或者只添加 key，看你喜好
+                        matched_concepts.add(c)
     except:
         pass
 
-    # 转换为字符串
     result = "/".join(list(matched_concepts))
     CONCEPT_CACHE[code] = result
     if result:
@@ -137,11 +152,14 @@ def get_core_concepts(code, name):
 
 
 def parse_holdings_text():
-    file_path = 'holdings.txt'
-    if not os.path.exists(file_path): return {}
+    """解析持仓文件"""
+    if not os.path.exists(HOLDINGS_PATH):
+        print(f"{Fore.YELLOW}⚠️ 未找到持仓文件: {HOLDINGS_PATH}{Fore.RESET}")
+        return {}
+
     holdings = {}
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(HOLDINGS_PATH, 'r', encoding='utf-8') as f:
             lines = f.readlines()
         for line in lines:
             line = line.strip()
@@ -157,18 +175,30 @@ def parse_holdings_text():
             holdings[code] = tag
         print(f"{Fore.CYAN}📂 银河持仓加载: {len(holdings)} 只{Fore.RESET}")
         return holdings
-    except:
+    except Exception as e:
+        print(f"{Fore.RED}❌ 读取持仓失败: {e}{Fore.RESET}")
         return {}
 
 
 def parse_ths_clipboard():
-    file_path = 'ths_clipboard.txt'
-    if not os.path.exists(file_path): return {}
+    """解析同花顺剪贴板"""
+    if not os.path.exists(THS_PATH):
+        print(f"{Fore.YELLOW}⚠️ 未找到同花顺文件: {THS_PATH}{Fore.RESET}")
+        return {}
+
     ths_pool = {}
     print(f"{Fore.MAGENTA}📂 同花顺剪贴板加载...{Fore.RESET}")
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
+        # 尝试 UTF-8
+        try:
+            with open(THS_PATH, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        except UnicodeDecodeError:
+            # 尝试 GBK
+            with open(THS_PATH, 'r', encoding='gbk') as f:
+                lines = f.readlines()
+            print(f"{Fore.YELLOW}ℹ️ 已切换为 GBK 编码读取{Fore.RESET}")
+
         for line in lines:
             line = line.strip()
             if not line or "代码" in line: continue
@@ -182,7 +212,8 @@ def parse_ths_clipboard():
             ths_pool[clean_code] = tag
         print(f"{Fore.BLUE}✅ 同花顺数据: {len(ths_pool)} 只{Fore.RESET}")
         return ths_pool
-    except:
+    except Exception as e:
+        print(f"{Fore.RED}❌ 读取同花顺文件失败: {e}{Fore.RESET}")
         return {}
 
 
@@ -258,8 +289,6 @@ def add_sector_leaders(strategy_rows, seen_codes):
                 m_data = get_market_data(code)
                 if m_data:
                     final_tag = f"{concept}中军"
-
-                    # 🔥 补充核心概念
                     extra_concepts = get_core_concepts(code, name)
                     if extra_concepts:
                         final_tag += f"/{extra_concepts}"
@@ -281,6 +310,8 @@ def add_sector_leaders(strategy_rows, seen_codes):
             pass
 
 
+# ================= 🚀 主程序 =================
+
 def generate_csv():
     date_str = get_target_date_str()
     print(f"{Fore.CYAN}⏳ 启动复盘生成 | 目标日期: {date_str} ...{Fore.RESET}")
@@ -300,8 +331,6 @@ def generate_csv():
         m_data = get_market_data(code)
         if m_data:
             final_turnover = zt_turnover if zt_turnover else m_data['turnover']
-
-            # 🔥 核心增强：自动追加概念
             extra_concepts = get_core_concepts(code, name)
 
             special_tags = check_special_shape(m_data)
@@ -379,21 +408,17 @@ def generate_csv():
         if code in seen_codes:
             for item in strategy_rows:
                 if item['code'] == code:
-                    # 标签逻辑
                     orig_tag = item['tag']
                     board_info = orig_tag.split('/')[0] if '板' in orig_tag.split('/')[0] else ''
 
-                    # 提取特殊标签
                     special_tags = [x for x in orig_tag.split('/') if "🔥" in x]
-                    # 提取已有的概念标签 (避免被覆盖)
                     existing_concepts = [x for x in orig_tag.split('/') if
                                          x in CORE_KEYWORDS or any(k in x for k in CORE_KEYWORDS)]
 
-                    # 组合
                     new_tag_parts = []
                     if board_info: new_tag_parts.append(board_info)
-                    new_tag_parts.append(tag)  # F佬/xxx
-                    new_tag_parts.extend(existing_concepts)  # 保留自动抓取的概念
+                    new_tag_parts.append(tag)
+                    new_tag_parts.extend(existing_concepts)
                     new_tag_parts.extend(special_tags)
 
                     if "回封" in orig_tag:
@@ -403,7 +428,6 @@ def generate_csv():
                     elif "炸板" in orig_tag:
                         new_tag_parts.append("炸板")
 
-                    # 去重
                     item['tag'] = "/".join(list(dict.fromkeys(new_tag_parts)))
                     item['link_dragon'] = get_link_dragon(code)
                     print(f"更新标签: {item['name']} -> {item['tag']}")
@@ -424,12 +448,17 @@ def generate_csv():
 
         df_save.sort_values(by=['tag'], ascending=False, inplace=True)
 
+        # 保存到存档目录
         filename_dated = f'strategy_pool_{date_str}.csv'
-        df_save.to_csv(filename_dated, index=False, encoding='utf-8-sig')
-        print(f"\n✅ 历史存档已生成: {filename_dated} ({len(df_save)} 只)")
+        save_path_dated = os.path.join(ARCHIVE_DIR, filename_dated)
 
-        shutil.copyfile(filename_dated, 'strategy_pool.csv')
-        print(f"✅ 监控链接已更新: strategy_pool.csv -> {filename_dated}")
+        df_save.to_csv(save_path_dated, index=False, encoding='utf-8-sig')
+        print(f"\n✅ 历史存档已生成: {save_path_dated} ({len(df_save)} 只)")
+
+        # 复制到最新文件（供监控脚本使用）
+        latest_path = os.path.join(OUTPUT_DIR, 'strategy_pool.csv')
+        shutil.copyfile(save_path_dated, latest_path)
+        print(f"✅ 监控链接已更新: {latest_path}")
 
 
 if __name__ == "__main__":

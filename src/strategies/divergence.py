@@ -1,3 +1,4 @@
+import os
 # ==============================================================================
 # 📌 4. F佬/Bo佬 逆势猎手 (detect_divergence.py) - 寻找抗跌真龙
 # ==============================================================================
@@ -19,7 +20,7 @@ ANCHOR_CODE = "000547"
 ANCHOR_NAME = "航天发展"
 
 # 策略池路径
-CSV_PATH = 'strategy_pool.csv'
+CSV_PATH = os.path.join('data', 'output', 'strategy_pool.csv')
 
 
 def get_minute_data(symbol):

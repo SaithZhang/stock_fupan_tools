@@ -16,7 +16,7 @@ START_PAGE = 1
 END_PAGE = 91
 
 # 保存文件名
-OUTPUT_FILE = f'nga_user_{AUTHOR_ID}_history.md'
+OUTPUT_FILE = os.path.join('data', 'output', 'archive', f'nga_user_{AUTHOR_ID}_history.md')
 # =========================================
 
 headers = {
