@@ -37,7 +37,7 @@ HOT_CONCEPTS = [
     ('人形机器人', 'concept'),
     ('商业航天', 'concept'),
     ('AI智能体', 'concept'),
-    ('消费电子概念', 'concept'),
+    ('消费电子', 'industry'),  # ⬅️ 修改点：去掉了"概念"后缀，类型改为 industry
     ('低空经济', 'concept'),
 ]
 
@@ -201,26 +201,42 @@ def add_sector_leaders(strategy_rows, seen_codes):
             else:
                 df = ak.stock_board_concept_cons_em(symbol=concept)
             if df is None or df.empty: continue
+
+            # 取成交额前2
             df = df.sort_values(by='成交额', ascending=False).head(2)
+
             for _, row in df.iterrows():
                 code, name = row['代码'], row['名称']
-                if code in seen_codes: continue
+                tag_suffix = f"/{concept}中军"
+
+                # 🛠️ 修改点：如果已存在，则追加标签
+                if code in seen_codes:
+                    for item in strategy_rows:
+                        if item['code'] == code:
+                            # 避免重复添加相同的标签
+                            if tag_suffix not in item['tag']:
+                                item['tag'] += tag_suffix
+                                print(f"追加标签: {name} -> {item['tag']}")
+                    continue  # 处理完追加后，跳过新增逻辑
+
+                # 如果不存在，则新增
                 m_data = get_market_data(code)
                 if m_data:
-                    tag_str = f"{concept}中军"
+                    final_tag = f"{concept}中军"  # 初始标签
                     strategy_rows.append({
-                        'code': code, 'name': name, 'tag': tag_str,
+                        'code': code, 'name': name, 'tag': final_tag,
                         'link_dragon': get_link_dragon(code),
                         'vol': m_data['vol'], 'pct_10': m_data['pct_10'],
                         'price': m_data['price'], 'open_pct': m_data['open_pct'],
                         'today_pct': m_data['today_pct']
                     })
                     seen_codes.add(code)
-                    print(f"入池: {name} ({tag_str})")
+                    print(f"入池: {name} ({final_tag})")
             time.sleep(0.5)
-        except:
+        except Exception as e:
+            # 建议打印错误，防止API悄悄失败
+            print(f"⚠️ 板块 {concept} 获取失败: {e}")
             pass
-
 
 def generate_csv():
     # 1. 确定日期

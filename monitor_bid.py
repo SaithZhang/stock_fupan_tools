@@ -264,58 +264,73 @@ def monitor_loop(pool):
 
 def load_ths_clipboard_to_df():
     """
-    [新增] 读取同花顺剪贴板文件，并转换为与 strategy_pool.csv 相同的 DataFrame 格式
+    [新增/修复版] 读取同花顺剪贴板文件 (增加GBK兼容和调试信息)
     """
     file_path = 'ths_clipboard.txt'
     if not os.path.exists(file_path):
-        return pd.DataFrame()  # 空表
+        return pd.DataFrame()
 
-    print(f"{Fore.MAGENTA}📋 发现同花顺临时池，正在加载...{Fore.RESET}")
+    print(f"{Fore.MAGENTA}📋 正在解析同花顺文件: {file_path}{Fore.RESET}")
 
-    new_rows = []
+    lines = []
+    # 1. 尝试 UTF-8 读取
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
-
-        for line in lines:
-            line = line.strip()
-            if not line or "代码" in line: continue  # 跳过空行和表头
-
-            # 使用正则拆分（处理不定长空格）
-            parts = re.split(r'\s+', line)
-            if len(parts) < 2: continue
-
-            raw_code = parts[0]  # 如 SZ300045
-            name = parts[1]  # 如 华力创通
-
-            # 1. 代码清洗：SZ300045 -> sz300045 (新浪接口格式)
-            sina_code = raw_code.lower()
-            # 2. 提取纯数字代码用于去重：300045
-            pure_code = re.sub(r'\D', '', raw_code)
-
-            # 3. 构造数据行 (字段要和 CSV 保持一致，没有的填默认值)
-            # CSV列名参考: sina_code,name,tag,today_pct,open_pct,price,pct_10,link_dragon,vol,code
-            new_rows.append({
-                'sina_code': sina_code,
-                'name': name,
-                'tag': f"午盘/观察/{name}",  # 给个特殊的紫色标签
-                'today_pct': 0,  # 初始值，稍后会实时获取
-                'open_pct': 0,
-                'price': 0,
-                'pct_10': 0,
-                'link_dragon': '',  # 临时加的就不配大哥了
-                'vol': 0,
-                'code': pure_code
-            })
-
-        if new_rows:
-            return pd.DataFrame(new_rows)
-        else:
+    except UnicodeDecodeError:
+        # 2. 如果失败，尝试 GBK (Windows默认)
+        try:
+            with open(file_path, 'r', encoding='gbk') as f:
+                lines = f.readlines()
+            print(f"{Fore.YELLOW}ℹ️ 检测到 GBK 编码，已自动兼容{Fore.RESET}")
+        except:
+            print(f"{Fore.RED}❌ 文件编码识别失败，请另存为 UTF-8{Fore.RESET}")
             return pd.DataFrame()
 
-    except Exception as e:
-        print(f"{Fore.RED}❌ 读取临时文件失败: {e}{Fore.RESET}")
+    new_rows = []
+    for line in lines:
+        line = line.strip()
+        # 跳过空行和表头
+        if not line or "代码" in line or "名称" in line:
+            continue
+
+            # 使用正则拆分（处理Tab或空格）
+        parts = re.split(r'\s+', line)
+        if len(parts) < 2: continue
+
+        raw_code = parts[0]  # 如 SZ300045
+        name = parts[1]  # 如 华力创通
+
+        # 清洗代码
+        sina_code = raw_code.lower()
+        pure_code = re.sub(r'\D', '', raw_code)
+
+        # 过滤无效行 (防止读取到末尾的统计行)
+        if len(pure_code) != 6: continue
+
+        # 打印一下读到了什么，方便你确认
+        # print(f"  -> 识别: {name} ({pure_code})")
+
+        new_rows.append({
+            'sina_code': sina_code,
+            'name': name,
+            'tag': f"午盘/观察/{name}",  # 紫色标签
+            'today_pct': 0,
+            'open_pct': 0,
+            'price': 0,
+            'pct_10': 0,
+            'link_dragon': '',
+            'vol': 0,
+            'code': pure_code
+        })
+
+    if new_rows:
+        print(f"{Fore.BLUE}✅ 成功解析同花顺标的: {len(new_rows)} 只{Fore.RESET}")
+        return pd.DataFrame(new_rows)
+    else:
+        print(f"{Fore.RED}⚠️ 文件读取成功但未解析到有效数据，请检查 txt 内容格式{Fore.RESET}")
         return pd.DataFrame()
+
 
 def load_strategy_pool():
     """
