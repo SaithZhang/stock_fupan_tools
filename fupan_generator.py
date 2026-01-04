@@ -1,21 +1,15 @@
 # ==============================================================================
-# 📌 1. F佬/Bo佬 离线复盘生成器 (fupan_generator.py) - 历史存档版
-# ==============================================================================
-# 更新日志：
-# 1. [文件存档] 自动生成带日期的CSV (如 strategy_pool_20231231.csv)。
-# 2. [默认链接] 同时更新 strategy_pool.csv 供监控脚本读取。
-# 3. [日期配置] 支持 TARGET_DATE 配置，可手动抓取历史日期的涨停数据。
-# 4. [双轨读取] 支持 holdings.txt 和 ths_clipboard.txt。
+# 📌 1. F佬/Bo佬 离线复盘生成器 (fupan_generator.py) - V3.0 换手率+论坛版
 # ==============================================================================
 
 import akshare as ak
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 import time
 import sys
 import re
-import shutil  # 用于复制文件
+import shutil
 from colorama import init, Fore
 
 if sys.platform == 'win32':
@@ -28,34 +22,48 @@ init(autoreset=True)
 
 # ================= ⚙️ 配置区 =================
 
-# 🔥 目标日期配置 (默认为 "today")
-# 如果想复盘昨天，填入具体日期，例如: "20231229"
-# 如果填 "today"，则自动获取当前日期
 TARGET_DATE = "today"
 
+# 🔥 增加 NGA 帖子提到的题材方向
 HOT_CONCEPTS = [
     ('人形机器人', 'concept'),
     ('商业航天', 'concept'),
     ('AI智能体', 'concept'),
-    ('消费电子', 'industry'),  # ⬅️ 修改点：去掉了"概念"后缀，类型改为 industry
+    ('消费电子', 'industry'),
     ('低空经济', 'concept'),
+    ('数字货币', 'concept'),  # 新增：对应中科江南、德生科技、御银
+    ('文化传媒', 'industry'),  # 新增：对应万事利、蓝色光标
 ]
 
+# 🔥 结合 NGA 论坛复盘 + F佬 逻辑的手动池
 F_LAO_LIST = {
+    # --- 商业航天/军工 ---
     '002201': 'F佬/九鼎(地天板/航天)',
-    '000665': 'F佬/湖北广电(AI智能体龙头)',
-    '002757': 'F佬/南兴(AI套利)',
-    '600728': 'F佬/佳都(AI套利)',
-    '002347': 'F佬/泰尔(机器人/航天双属性)',
-    '603667': 'F佬/五洲(机器人/航天)',
-    '603278': 'F佬/大业(机器人/航天)',
-    '002009': 'F佬/天奇(锋龙补涨/弱转强)',
-    '002050': 'F佬/三花(机器人中军)',
-    '002471': 'F佬/中超(断板反包预期)',
-    '002177': 'F佬/御银(弱转强)',
     '600118': 'F佬/卫通(千亿中军)',
-    '603123': 'F佬/翠微(炸板/需弱转强)',
-    '002703': 'F佬/世宝(需红开)',
+    '603278': 'F佬/大业(机器人/航天/6板)',
+    '002347': 'F佬/泰尔(机器人/航天/弱转强)',
+    '002931': 'F佬/锋龙(航天/5板)',
+    '603667': 'F佬/五洲(机器人/航天)',
+
+    # --- AI / 智能体 / 应用 ---
+    '000665': 'F佬/湖北广电(AI智能体龙头)',
+    '002757': 'F佬/南兴(AI套利/机器人)',
+    '300058': 'NGA/蓝光(AI智能体/20cm)',
+    '301066': 'NGA/万事利(AI应用/春晚IP/20cm)',
+
+    # --- 数字货币 / 信创 (论坛重点) ---
+    '301153': 'NGA/中科江南(数字货币/数据要素)',
+    '002908': 'NGA/德生科技(数字货币/社保)',
+    '002177': 'F佬/御银(数字货币/死亡换手)',
+
+    # --- 机器人 / 汽车 ---
+    '002050': 'F佬/三花(机器人中军)',
+    '002009': 'F佬/天奇(被泰尔卡位)',
+    '000559': 'NGA/万向钱潮(量化拉升/反包预期)',
+
+    # --- 其他 ---
+    '603130': 'NGA/云中马(马字辈/纺织)',
+    '603123': 'F佬/翠微(数字货币/炸板)',
 }
 
 HOLDING_STRATEGIES = {
@@ -75,7 +83,6 @@ LINK_DRAGON_MAP = {
 # ========================================================================
 
 def get_target_date_str():
-    """获取格式化的目标日期字符串 YYYYMMDD"""
     if TARGET_DATE == "today":
         return datetime.now().strftime("%Y%m%d")
     return TARGET_DATE
@@ -113,11 +120,6 @@ def parse_holdings_text():
             if len(parts) < 3: continue
             code = parts[0]
             name = parts[1]
-            try:
-                if float(parts[2]) <= 0: continue
-            except:
-                continue
-
             if code in HOLDING_STRATEGIES:
                 tag = HOLDING_STRATEGIES[code][0]
             else:
@@ -125,8 +127,7 @@ def parse_holdings_text():
             holdings[code] = tag
         print(f"{Fore.CYAN}📂 银河持仓加载: {len(holdings)} 只{Fore.RESET}")
         return holdings
-    except Exception as e:
-        print(f"{Fore.RED}❌ 读取 holdings.txt 失败: {e}{Fore.RESET}")
+    except:
         return {}
 
 
@@ -151,32 +152,38 @@ def parse_ths_clipboard():
             ths_pool[clean_code] = tag
         print(f"{Fore.BLUE}✅ 同花顺数据: {len(ths_pool)} 只{Fore.RESET}")
         return ths_pool
-    except Exception as e:
-        print(f"{Fore.RED}❌ 读取 ths_clipboard.txt 失败: {e}{Fore.RESET}")
+    except:
         return {}
 
 
 def get_market_data(code):
     try:
-        # 注意：这里获取的是【最新】的实时/历史行情
-        # 如果 TARGET_DATE 是过去日期，这里的 "today_pct" 依然会取到最新一天的
-        # 若要完全回测历史状态比较复杂，这里仅作为复盘选股工具，默认取最新状态
         df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
         if df.empty or len(df) < 2: return None
         last_row = df.iloc[-1]
         prev_row = df.iloc[-2]
         current_price = last_row['收盘']
+
+        # 📌 获取换手率 (akshare 历史接口通常有 '换手率' 列)
+        turnover = 0
+        if '换手率' in last_row:
+            turnover = last_row['换手率']
+
         if len(df) > 11:
             base_10 = df.iloc[-11]['收盘']
             pct_10 = (current_price - base_10) / base_10 * 100
         else:
             pct_10 = 0
+
         return {
-            'vol': last_row['成交量'], 'pct_10': round(pct_10, 2),
+            'vol': last_row['成交量'],
+            'pct_10': round(pct_10, 2),
             'price': current_price,
             'open_pct': round((last_row['开盘'] - prev_row['收盘']) / prev_row['收盘'] * 100, 2),
             'today_pct': round(last_row['涨跌幅'], 2),
-            'high': last_row['最高'], 'low': last_row['最低'],
+            'turnover': round(float(turnover), 2),  # 换手率
+            'high': last_row['最高'],
+            'low': last_row['最低'],
             'prev_close': prev_row['收盘']
         }
     except:
@@ -186,8 +193,15 @@ def get_market_data(code):
 def check_special_shape(m_data):
     tags = []
     if m_data:
+        # 地天板判定
         low_pct = (m_data['low'] - m_data['prev_close']) / m_data['prev_close'] * 100
-        if low_pct < -9.0 and m_data['today_pct'] > 9.0: tags.append("🔥地天板")
+        if low_pct < -9.0 and m_data['today_pct'] > 9.0:
+            tags.append("🔥地天板")
+
+        # 20cm 判定 (创业板30/科创板68 且涨幅>14%)
+        if m_data['today_pct'] > 14.0:
+            tags.append("🔥20cm")
+
     return tags
 
 
@@ -202,84 +216,93 @@ def add_sector_leaders(strategy_rows, seen_codes):
                 df = ak.stock_board_concept_cons_em(symbol=concept)
             if df is None or df.empty: continue
 
-            # 取成交额前2
             df = df.sort_values(by='成交额', ascending=False).head(2)
 
             for _, row in df.iterrows():
                 code, name = row['代码'], row['名称']
                 tag_suffix = f"/{concept}中军"
 
-                # 🛠️ 修改点：如果已存在，则追加标签
                 if code in seen_codes:
                     for item in strategy_rows:
                         if item['code'] == code:
-                            # 避免重复添加相同的标签
                             if tag_suffix not in item['tag']:
                                 item['tag'] += tag_suffix
                                 print(f"追加标签: {name} -> {item['tag']}")
-                    continue  # 处理完追加后，跳过新增逻辑
+                    continue
 
-                # 如果不存在，则新增
                 m_data = get_market_data(code)
                 if m_data:
-                    final_tag = f"{concept}中军"  # 初始标签
+                    final_tag = f"{concept}中军"
                     strategy_rows.append({
                         'code': code, 'name': name, 'tag': final_tag,
                         'link_dragon': get_link_dragon(code),
-                        'vol': m_data['vol'], 'pct_10': m_data['pct_10'],
-                        'price': m_data['price'], 'open_pct': m_data['open_pct'],
-                        'today_pct': m_data['today_pct']
+                        'vol': m_data['vol'],
+                        'pct_10': m_data['pct_10'],
+                        'price': m_data['price'],
+                        'open_pct': m_data['open_pct'],
+                        'today_pct': m_data['today_pct'],
+                        'turnover': m_data['turnover']
                     })
                     seen_codes.add(code)
                     print(f"入池: {name} ({final_tag})")
             time.sleep(0.5)
         except Exception as e:
-            # 建议打印错误，防止API悄悄失败
-            print(f"⚠️ 板块 {concept} 获取失败: {e}")
             pass
 
+
 def generate_csv():
-    # 1. 确定日期
     date_str = get_target_date_str()
     print(f"{Fore.CYAN}⏳ 启动复盘生成 | 目标日期: {date_str} ...{Fore.RESET}")
 
     strategy_rows = []
     seen_codes = set()
 
-    # 2. 读取各类文件
     my_holdings = parse_holdings_text()
     my_ths_list = parse_ths_clipboard()
 
-    # 3. 合并列表 (持仓 > F佬 > 同花顺)
+    # 结合 手动池
     combined_manual_list = my_ths_list.copy()
     combined_manual_list.update(F_LAO_LIST)
     combined_manual_list.update(my_holdings)
 
-    def add_item(code, name, base_tag):
+    def add_item(code, name, base_tag, zt_turnover=None):
         if code in seen_codes: return
         m_data = get_market_data(code)
         if m_data:
+            # 优先使用涨停池接口传过来的换手率（如果有），否则用历史接口的
+            final_turnover = zt_turnover if zt_turnover else m_data['turnover']
+
             special_tags = check_special_shape(m_data)
-            final_tag = f"{base_tag}/🔥地天板" if "🔥地天板" in special_tags else base_tag
+            tag_suffix = "/".join(special_tags)
+            if tag_suffix:
+                final_tag = f"{base_tag}/{tag_suffix}"
+            else:
+                final_tag = base_tag
+
             strategy_rows.append({
                 'code': code, 'name': name, 'tag': final_tag,
                 'link_dragon': get_link_dragon(code),
-                'vol': m_data['vol'], 'pct_10': m_data['pct_10'],
-                'price': m_data['price'], 'open_pct': m_data['open_pct'],
-                'today_pct': m_data['today_pct']
+                'vol': m_data['vol'],
+                'pct_10': m_data['pct_10'],
+                'price': m_data['price'],
+                'open_pct': m_data['open_pct'],
+                'today_pct': m_data['today_pct'],
+                'turnover': final_turnover
             })
             seen_codes.add(code)
-            print(f"入池: {name:<8} ({final_tag})")
+            print(f"入池: {name:<8} ({final_tag}) 换手:{final_turnover}%")
 
-    # --- 扫描流程 ---
+    # --- 1. 抓取涨停 ---
     print(f"\n{Fore.YELLOW}[1/5] 抓取涨停数据 ({date_str})...{Fore.RESET}")
     try:
-        # 注意：这里使用的是 date_str，可以抓取历史涨停板
         df_zt = ak.stock_zt_pool_em(date=date_str)
         if not df_zt.empty:
             for _, row in df_zt.iterrows():
                 open_num = row['炸板次数']
                 is_first_limit = row['首次封板时间'] == row['最后封板时间']
+                # 📌 从涨停池接口直接获取换手率
+                zt_turnover = row['换手率'] if '换手率' in row else 0
+
                 tag = f"{row['连板数']}板"
                 if open_num > 0:
                     tag += f"/回封(炸{open_num}次)"
@@ -287,74 +310,97 @@ def generate_csv():
                     tag += "/硬板(无炸)"
                 else:
                     tag += "/强势"
-                add_item(row['代码'], row['名称'], tag)
+                add_item(row['代码'], row['名称'], tag, zt_turnover)
         else:
-            print(f"{Fore.RED}⚠️ 未获取到 {date_str} 的涨停数据 (可能是休市或数据未更新){Fore.RESET}")
+            print(f"{Fore.RED}⚠️ 未获取到涨停数据{Fore.RESET}")
     except Exception as e:
         print(f"获取涨停数据失败: {e}")
 
+    # --- 2. 抓取炸板 ---
     print(f"\n{Fore.YELLOW}[2/5] 抓取炸板数据 ({date_str})...{Fore.RESET}")
     try:
         df_zb = ak.stock_zt_pool_zbgc_em(date=date_str)
         if not df_zb.empty:
-            for _, row in df_zb.iterrows(): add_item(row['代码'], row['名称'], "炸板/反包预期")
+            for _, row in df_zb.iterrows():
+                # 炸板池通常也有换手率
+                zb_turnover = row['换手率'] if '换手率' in row else None
+                add_item(row['代码'], row['名称'], "炸板/反包预期", zb_turnover)
     except:
         pass
 
+    # --- 3. 抓取跌停 ---
     print(f"\n{Fore.YELLOW}[3/5] 抓取跌停数据 ({date_str})...{Fore.RESET}")
     try:
         df_dt = ak.stock_zt_pool_dtgc_em(date=date_str)
         if not df_dt.empty:
-            for _, row in df_dt.iterrows(): add_item(row['代码'], row['名称'], "跌停/博弈修复")
+            for _, row in df_dt.iterrows():
+                dt_turnover = row['换手率'] if '换手率' in row else None
+                add_item(row['代码'], row['名称'], "跌停/博弈修复", dt_turnover)
     except:
         pass
 
+    # --- 4. 板块中军 ---
     print(f"\n{Fore.YELLOW}[4/5] 挖掘板块中军 (实时)...{Fore.RESET}")
     add_sector_leaders(strategy_rows, seen_codes)
 
+    # --- 5. 注入关注 ---
     print(f"\n{Fore.YELLOW}[5/5] 注入持仓与关注...{Fore.RESET}")
     for code, tag in combined_manual_list.items():
         if code in seen_codes:
             for item in strategy_rows:
                 if item['code'] == code:
-                    orig_parts = item['tag'].split('/')
-                    board_info = orig_parts[0] if '板' in orig_parts[0] else ''
+                    # 标签合并逻辑
+                    orig_tag = item['tag']
+                    # 提取板数信息 (如 2板)
+                    board_info = orig_tag.split('/')[0] if '板' in orig_tag.split('/')[0] else ''
+
+                    # 提取 20cm/地天板 信息
+                    special_tags = []
+                    if "🔥" in orig_tag:
+                        special_tags = [x for x in orig_tag.split('/') if "🔥" in x]
+
+                    # 组合新标签： 板数 + 手动备注 + 特殊形态
+                    new_tag_parts = []
+                    if board_info: new_tag_parts.append(board_info)
+                    new_tag_parts.append(tag)  # F佬/xxx
+                    new_tag_parts.extend(special_tags)
+
+                    # 只要原标签里有“回封”或“硬板”，也可以保留
                     status_info = ""
-                    for part in orig_parts:
-                        if "回封" in part or "硬板" in part or "强势" in part:
-                            status_info = part
-                            break
-                    new_tag = tag
-                    if board_info: new_tag = f"{board_info}/{tag}"
-                    if status_info: new_tag += f"/{status_info}"
-                    item['tag'] = new_tag
+                    if "回封" in orig_tag:
+                        status_info = "回封"
+                    elif "硬板" in orig_tag:
+                        status_info = "硬板"
+                    elif "炸板" in orig_tag:
+                        status_info = "炸板"
+                    if status_info: new_tag_parts.append(status_info)
+
+                    item['tag'] = "/".join(new_tag_parts)
                     item['link_dragon'] = get_link_dragon(code)
+                    print(f"更新标签: {item['name']} -> {item['tag']}")
                     break
         else:
             try:
-                if "同花顺/" in tag:
-                    name_guess = tag.split('/')[1]
-                else:
-                    name_guess = tag.split('/')[1].split('(')[0] if '/' in tag else "关注股"
+                name_guess = tag.split('/')[1].split('(')[0] if '/' in tag else "关注"
                 add_item(code, name_guess, tag)
             except:
-                add_item(code, "关注标的", tag)
+                add_item(code, "关注", tag)
 
     if strategy_rows:
         df_save = pd.DataFrame(strategy_rows)
         df_save['sina_code'] = df_save['code'].apply(format_sina)
-        cols = ['sina_code', 'name', 'tag', 'today_pct', 'open_pct', 'price', 'pct_10', 'link_dragon', 'vol', 'code']
+        # 🔥 增加 turnover 列到输出
+        cols = ['sina_code', 'name', 'tag', 'today_pct', 'turnover', 'open_pct', 'price', 'pct_10', 'link_dragon',
+                'vol', 'code']
         df_save = df_save.reindex(columns=cols)
+
+        # 排序优化：先按标签里的 '板' 排序，再按 'F佬' 排序
         df_save.sort_values(by=['tag'], ascending=False, inplace=True)
 
-        # 📂 保存逻辑升级
-        # 1. 保存带日期的存档文件
         filename_dated = f'strategy_pool_{date_str}.csv'
         df_save.to_csv(filename_dated, index=False, encoding='utf-8-sig')
         print(f"\n✅ 历史存档已生成: {filename_dated} ({len(df_save)} 只)")
 
-        # 2. 复制一份为 strategy_pool.csv (供 monitor_bid.py 默认读取)
-        # 只有当生成的是“今天”的数据，或者你强制想让监控看某天的数据时
         shutil.copyfile(filename_dated, 'strategy_pool.csv')
         print(f"✅ 监控链接已更新: strategy_pool.csv -> {filename_dated}")
 
