@@ -1,5 +1,5 @@
 # ==============================================================================
-# 📌 1. F佬/Bo佬 离线复盘生成器 (fupan_generator.py) - V3.0 换手率+论坛版
+# 📌 1. F佬/Bo佬 离线复盘生成器 (fupan_generator.py) - V4.0 全量概念增强版
 # ==============================================================================
 
 import akshare as ak
@@ -24,44 +24,43 @@ init(autoreset=True)
 
 TARGET_DATE = "today"
 
-# 🔥 增加 NGA 帖子提到的题材方向
+# 🔥 定义我们要重点捕获的概念关键词（只要股票有这些概念，就自动追加到标签）
+CORE_KEYWORDS = [
+    '机器人', '航天', '军工', '卫星', '低空',
+    'AI', '人工智能', '智能体', '算力', 'CPO', '存储',
+    '消费电子', '华为', '信创', '数字货币', '数据要素',
+    '文化传媒', '短剧', '多模态', '纺织'
+]
+
+# 用于挖掘中军的板块列表
 HOT_CONCEPTS = [
     ('人形机器人', 'concept'),
     ('商业航天', 'concept'),
     ('AI智能体', 'concept'),
     ('消费电子', 'industry'),
     ('低空经济', 'concept'),
-    ('数字货币', 'concept'),  # 新增：对应中科江南、德生科技、御银
-    ('文化传媒', 'industry'),  # 新增：对应万事利、蓝色光标
+    ('数字货币', 'concept'),
+    ('文化传媒', 'industry'),
 ]
 
-# 🔥 结合 NGA 论坛复盘 + F佬 逻辑的手动池
+# 🔥 F佬/论坛 手动池
 F_LAO_LIST = {
-    # --- 商业航天/军工 ---
     '002201': 'F佬/九鼎(地天板/航天)',
     '600118': 'F佬/卫通(千亿中军)',
     '603278': 'F佬/大业(机器人/航天/6板)',
     '002347': 'F佬/泰尔(机器人/航天/弱转强)',
     '002931': 'F佬/锋龙(航天/5板)',
     '603667': 'F佬/五洲(机器人/航天)',
-
-    # --- AI / 智能体 / 应用 ---
     '000665': 'F佬/湖北广电(AI智能体龙头)',
     '002757': 'F佬/南兴(AI套利/机器人)',
     '300058': 'NGA/蓝光(AI智能体/20cm)',
     '301066': 'NGA/万事利(AI应用/春晚IP/20cm)',
-
-    # --- 数字货币 / 信创 (论坛重点) ---
     '301153': 'NGA/中科江南(数字货币/数据要素)',
     '002908': 'NGA/德生科技(数字货币/社保)',
     '002177': 'F佬/御银(数字货币/死亡换手)',
-
-    # --- 机器人 / 汽车 ---
     '002050': 'F佬/三花(机器人中军)',
     '002009': 'F佬/天奇(被泰尔卡位)',
     '000559': 'NGA/万向钱潮(量化拉升/反包预期)',
-
-    # --- 其他 ---
     '603130': 'NGA/云中马(马字辈/纺织)',
     '603123': 'F佬/翠微(数字货币/炸板)',
 }
@@ -78,6 +77,9 @@ HOLDING_STRATEGIES = {
 LINK_DRAGON_MAP = {
     '002009': '002931',
 }
+
+# 缓存概念数据，避免重复请求
+CONCEPT_CACHE = {}
 
 
 # ========================================================================
@@ -104,6 +106,34 @@ def get_link_dragon(code):
         if dragon.startswith('sz') or dragon.startswith('sh'): return dragon
         return format_sina(dragon)
     return ''
+
+
+# 🔥 新增：获取股票核心概念
+def get_core_concepts(code, name):
+    if code in CONCEPT_CACHE:
+        return CONCEPT_CACHE[code]
+
+    matched_concepts = set()
+    try:
+        # 获取个股所属概念板块 (东方财富接口)
+        # 注意：频繁调用可能会慢，所以加了缓存
+        df = ak.stock_board_concept_name_em(symbol=code)
+        if df is not None and not df.empty:
+            all_concepts = df['板块名称'].tolist()
+            # 过滤出我们关心的核心关键词
+            for c in all_concepts:
+                for key in CORE_KEYWORDS:
+                    if key in c:
+                        matched_concepts.add(c)  # 或者只添加 key，看你喜好
+    except:
+        pass
+
+    # 转换为字符串
+    result = "/".join(list(matched_concepts))
+    CONCEPT_CACHE[code] = result
+    if result:
+        print(f"   ↳ {name} 命中概念: {result}")
+    return result
 
 
 def parse_holdings_text():
@@ -164,7 +194,6 @@ def get_market_data(code):
         prev_row = df.iloc[-2]
         current_price = last_row['收盘']
 
-        # 📌 获取换手率 (akshare 历史接口通常有 '换手率' 列)
         turnover = 0
         if '换手率' in last_row:
             turnover = last_row['换手率']
@@ -181,7 +210,7 @@ def get_market_data(code):
             'price': current_price,
             'open_pct': round((last_row['开盘'] - prev_row['收盘']) / prev_row['收盘'] * 100, 2),
             'today_pct': round(last_row['涨跌幅'], 2),
-            'turnover': round(float(turnover), 2),  # 换手率
+            'turnover': round(float(turnover), 2),
             'high': last_row['最高'],
             'low': last_row['最低'],
             'prev_close': prev_row['收盘']
@@ -193,15 +222,11 @@ def get_market_data(code):
 def check_special_shape(m_data):
     tags = []
     if m_data:
-        # 地天板判定
         low_pct = (m_data['low'] - m_data['prev_close']) / m_data['prev_close'] * 100
         if low_pct < -9.0 and m_data['today_pct'] > 9.0:
             tags.append("🔥地天板")
-
-        # 20cm 判定 (创业板30/科创板68 且涨幅>14%)
         if m_data['today_pct'] > 14.0:
             tags.append("🔥20cm")
-
     return tags
 
 
@@ -233,6 +258,12 @@ def add_sector_leaders(strategy_rows, seen_codes):
                 m_data = get_market_data(code)
                 if m_data:
                     final_tag = f"{concept}中军"
+
+                    # 🔥 补充核心概念
+                    extra_concepts = get_core_concepts(code, name)
+                    if extra_concepts:
+                        final_tag += f"/{extra_concepts}"
+
                     strategy_rows.append({
                         'code': code, 'name': name, 'tag': final_tag,
                         'link_dragon': get_link_dragon(code),
@@ -260,7 +291,6 @@ def generate_csv():
     my_holdings = parse_holdings_text()
     my_ths_list = parse_ths_clipboard()
 
-    # 结合 手动池
     combined_manual_list = my_ths_list.copy()
     combined_manual_list.update(F_LAO_LIST)
     combined_manual_list.update(my_holdings)
@@ -269,15 +299,17 @@ def generate_csv():
         if code in seen_codes: return
         m_data = get_market_data(code)
         if m_data:
-            # 优先使用涨停池接口传过来的换手率（如果有），否则用历史接口的
             final_turnover = zt_turnover if zt_turnover else m_data['turnover']
 
+            # 🔥 核心增强：自动追加概念
+            extra_concepts = get_core_concepts(code, name)
+
             special_tags = check_special_shape(m_data)
-            tag_suffix = "/".join(special_tags)
-            if tag_suffix:
-                final_tag = f"{base_tag}/{tag_suffix}"
-            else:
-                final_tag = base_tag
+            tag_list = [base_tag]
+            if extra_concepts: tag_list.append(extra_concepts)
+            tag_list.extend(special_tags)
+
+            final_tag = "/".join(tag_list)
 
             strategy_rows.append({
                 'code': code, 'name': name, 'tag': final_tag,
@@ -290,7 +322,7 @@ def generate_csv():
                 'turnover': final_turnover
             })
             seen_codes.add(code)
-            print(f"入池: {name:<8} ({final_tag}) 换手:{final_turnover}%")
+            print(f"入池: {name:<8} ({final_tag})")
 
     # --- 1. 抓取涨停 ---
     print(f"\n{Fore.YELLOW}[1/5] 抓取涨停数据 ({date_str})...{Fore.RESET}")
@@ -300,7 +332,6 @@ def generate_csv():
             for _, row in df_zt.iterrows():
                 open_num = row['炸板次数']
                 is_first_limit = row['首次封板时间'] == row['最后封板时间']
-                # 📌 从涨停池接口直接获取换手率
                 zt_turnover = row['换手率'] if '换手率' in row else 0
 
                 tag = f"{row['连板数']}板"
@@ -322,7 +353,6 @@ def generate_csv():
         df_zb = ak.stock_zt_pool_zbgc_em(date=date_str)
         if not df_zb.empty:
             for _, row in df_zb.iterrows():
-                # 炸板池通常也有换手率
                 zb_turnover = row['换手率'] if '换手率' in row else None
                 add_item(row['代码'], row['名称'], "炸板/反包预期", zb_turnover)
     except:
@@ -349,33 +379,32 @@ def generate_csv():
         if code in seen_codes:
             for item in strategy_rows:
                 if item['code'] == code:
-                    # 标签合并逻辑
+                    # 标签逻辑
                     orig_tag = item['tag']
-                    # 提取板数信息 (如 2板)
                     board_info = orig_tag.split('/')[0] if '板' in orig_tag.split('/')[0] else ''
 
-                    # 提取 20cm/地天板 信息
-                    special_tags = []
-                    if "🔥" in orig_tag:
-                        special_tags = [x for x in orig_tag.split('/') if "🔥" in x]
+                    # 提取特殊标签
+                    special_tags = [x for x in orig_tag.split('/') if "🔥" in x]
+                    # 提取已有的概念标签 (避免被覆盖)
+                    existing_concepts = [x for x in orig_tag.split('/') if
+                                         x in CORE_KEYWORDS or any(k in x for k in CORE_KEYWORDS)]
 
-                    # 组合新标签： 板数 + 手动备注 + 特殊形态
+                    # 组合
                     new_tag_parts = []
                     if board_info: new_tag_parts.append(board_info)
                     new_tag_parts.append(tag)  # F佬/xxx
+                    new_tag_parts.extend(existing_concepts)  # 保留自动抓取的概念
                     new_tag_parts.extend(special_tags)
 
-                    # 只要原标签里有“回封”或“硬板”，也可以保留
-                    status_info = ""
                     if "回封" in orig_tag:
-                        status_info = "回封"
+                        new_tag_parts.append("回封")
                     elif "硬板" in orig_tag:
-                        status_info = "硬板"
+                        new_tag_parts.append("硬板")
                     elif "炸板" in orig_tag:
-                        status_info = "炸板"
-                    if status_info: new_tag_parts.append(status_info)
+                        new_tag_parts.append("炸板")
 
-                    item['tag'] = "/".join(new_tag_parts)
+                    # 去重
+                    item['tag'] = "/".join(list(dict.fromkeys(new_tag_parts)))
                     item['link_dragon'] = get_link_dragon(code)
                     print(f"更新标签: {item['name']} -> {item['tag']}")
                     break
@@ -389,12 +418,10 @@ def generate_csv():
     if strategy_rows:
         df_save = pd.DataFrame(strategy_rows)
         df_save['sina_code'] = df_save['code'].apply(format_sina)
-        # 🔥 增加 turnover 列到输出
         cols = ['sina_code', 'name', 'tag', 'today_pct', 'turnover', 'open_pct', 'price', 'pct_10', 'link_dragon',
                 'vol', 'code']
         df_save = df_save.reindex(columns=cols)
 
-        # 排序优化：先按标签里的 '板' 排序，再按 'F佬' 排序
         df_save.sort_values(by=['tag'], ascending=False, inplace=True)
 
         filename_dated = f'strategy_pool_{date_str}.csv'
