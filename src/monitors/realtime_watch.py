@@ -1,5 +1,5 @@
 # ==============================================================================
-# 📌 3. F佬/Bo佬 智能盘中监控系统 (src/monitors/realtime_watch.py) - v1.2.0 路径增强版
+# 📌 3. F佬/Bo佬 智能盘中监控系统 (src/monitors/realtime_watch.py) - v1.2.1 修复量比Bug版
 # ==============================================================================
 import requests
 import pandas as pd
@@ -31,7 +31,7 @@ THS_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'ths_clipboard.txt')
 print(f"{Fore.CYAN}🔧 监控数据源定位: {CSV_PATH}{Fore.RESET}")
 
 # 重点关注概念 (用于高亮显示)
-HOT_TOPICS = ["机器人", "航天", "AI", "消费电子", "算力", "低空", "固态"]
+HOT_TOPICS = ["机器人", "航天", "AI", "消费电子", "算力", "低空", "固态", "军工", "卫星"]
 
 
 # ================= 🛠️ 数据加载函数 =================
@@ -190,28 +190,6 @@ def fetch_sina_data(sina_codes):
     return parsed_data
 
 
-def get_market_sentiment(pool_data):
-    """计算简单的情绪指标"""
-    high_tier_count = 0
-    crash_count = 0
-    broken_limit_count = 0
-
-    for code, data in pool_data.items():
-        if data.get('max_pct', 0) > 9.5 and data.get('pct', 0) < 9.0:
-            broken_limit_count += 1
-
-        tag = str(data.get('tag', ''))
-        if '板' in tag:
-            high_tier_count += 1
-            if data.get('pct', 0) < -5: crash_count += 1
-
-    status = "NORMAL"
-    if high_tier_count > 0 and (crash_count / high_tier_count > 0.3 or crash_count >= 3):
-        status = "CRASH"
-
-    return status, crash_count, broken_limit_count
-
-
 def monitor_loop(pool):
     # 1. 提取所有需要查询的代码 (包括关联的大哥)
     all_codes = set()
@@ -232,12 +210,15 @@ def monitor_loop(pool):
         if code in real_time_data:
             # 浅拷贝避免修改原始字典造成污染
             new_item = item.copy()
-            new_item.update(real_time_data[code])
-            active_pool.append(new_item)
 
-    # 4. 计算情绪
-    # sentiment, crash_n, broken_n = get_market_sentiment({x['sina_code']: x for x in active_pool})
-    # (简化版显示)
+            # 🔥 [关键修复] 先保存 CSV 里的昨日成交量，再更新今日数据
+            # 这样就不会被 real_time_data['vol'] 覆盖了
+            new_item['yesterday_vol'] = item.get('vol', 0)
+
+            # 更新实时数据 (这里的 vol 是今日成交量)
+            new_item.update(real_time_data[code])
+
+            active_pool.append(new_item)
 
     # 5. 清屏与打印表头
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -247,7 +228,7 @@ def monitor_loop(pool):
     print(f"🔥 F佬/Bo佬 盘中作战室 | {curr_time} | 监控标的: {len(active_pool)}只")
     print("=" * 145)
     print(
-        f"{'名称':<8} {'核心标签':<25} {'涨幅':<12} {'现价':<8} {'今开%':<8} {'联动状态':<15} {'最高%':<8} {'量比':<8} {'AI决策建议'}")
+        f"{'名称':<8} {'核心标签':<25} {'涨幅':<12} {'现价':<8} {'今开%':<8} {'联动状态':<15} {'最高%':<8} {'竞价/量比':<10} {'AI决策建议'}")
     print("-" * 145)
 
     # 6. 逐行打印
@@ -260,10 +241,14 @@ def monitor_loop(pool):
         curr_p = item['curr_p']
         code = item['sina_code']
 
-        # 计算量比
-        yesterday_vol = float(item.get('vol', 0))
-        current_vol = item['vol']
-        vol_ratio = (current_vol / yesterday_vol * 100) if yesterday_vol > 0 else 0
+        # 🔥 [关键修复] 计算量比 (今日实时量 / 昨日全天量)
+        # 注意：CSV里的 'vol' 已经是昨日量了 (由 yesterday_vol 承载)
+        # 实时数据里的 'vol' 是今日量 (由 vol 承载)
+        yesterday_v = float(item.get('yesterday_vol', 0))
+        today_v = float(item.get('vol', 0))
+
+        # 避免除以0
+        vol_ratio = (today_v / yesterday_v * 100) if yesterday_v > 0 else 0
 
         # --- 渲染逻辑 ---
 
@@ -328,14 +313,20 @@ def monitor_loop(pool):
             decision = f"{Fore.MAGENTA}{wts_msg}{Style.RESET_ALL}"
         elif max_pct > 9.5 and pct < 9.0:
             decision = f"{Fore.YELLOW}💥炸板{Style.RESET_ALL}"
+
+        # 竞价爆量提示 (9:25-9:30时 vol_ratio 代表竞价占比)
+        # 如果占比 > 5% 且 < 20% (过大可能是出货)，显示放量
+        elif vol_ratio > 5 and vol_ratio < 20 and open_pct > 0:
+            decision = f"{Fore.CYAN}竞价爆量{Style.RESET_ALL}"
         elif vol_ratio > 150:
+            # 开盘后
             decision = f"{Fore.CYAN}放量{Style.RESET_ALL}"
         else:
             decision = "观察"
 
         # 格式化输出
-        ratio_str = f"{vol_ratio:.0f}%"
-        if vol_ratio > 100: ratio_str = f"{Fore.MAGENTA}{ratio_str}{Style.RESET_ALL}"
+        ratio_str = f"{vol_ratio:.1f}%"
+        if vol_ratio > 5: ratio_str = f"{Fore.MAGENTA}{ratio_str}{Style.RESET_ALL}"
 
         open_str = f"{open_pct:+.1f}%"
         if open_pct > 0:
@@ -344,7 +335,7 @@ def monitor_loop(pool):
             open_str = f"{Fore.GREEN}{open_str}{Style.RESET_ALL}"
 
         print(
-            f"{name:<8} {tag_display} {pct_str:<22} {curr_p:<8} {open_str:<18} {link_info:<24} {max_pct:<8.1f} {ratio_str:<18} {decision}")
+            f"{name:<8} {tag_display} {pct_str:<22} {curr_p:<8} {open_str:<18} {link_info:<24} {max_pct:<8.1f} {ratio_str:<10} {decision}")
 
     print("=" * 145)
 
