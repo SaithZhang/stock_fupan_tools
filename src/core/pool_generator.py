@@ -1,5 +1,5 @@
 # ==============================================================================
-# 📌 1. F佬/Bo佬 离线复盘生成器 (src/core/pool_generator.py) - v1.2.1 结构重构版
+# 📌 1. F佬/Bo佬 离线复盘生成器 (src/core/pool_generator.py) - v1.2.2 量比增强版
 # ==============================================================================
 
 import akshare as ak
@@ -31,7 +31,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
 # --- 定义输入/输出文件路径 ---
 HOLDINGS_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'holdings.txt')
 THS_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'ths_clipboard.txt')
-F_LAO_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'f_lao_list.txt')  # [新增] txt配置路径
+F_LAO_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'f_lao_list.txt')
 
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'data', 'output')
 ARCHIVE_DIR = os.path.join(OUTPUT_DIR, 'archive')
@@ -248,8 +248,8 @@ def get_market_data(code):
         df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
         if df.empty or len(df) < 2: return None
 
-        last_row = df.iloc[-1]
-        prev_row = df.iloc[-2]
+        last_row = df.iloc[-1]  # 最后一个交易日（今日）
+        prev_row = df.iloc[-2]  # 倒数第二个交易日（昨日）
         current_price = last_row['收盘']
 
         turnover = last_row.get('换手率', 0)
@@ -261,8 +261,15 @@ def get_market_data(code):
         else:
             pct_10 = 0
 
+        # [修改] 计算量比逻辑
+        vol_current = last_row['成交量']
+        vol_prev = prev_row['成交量']
+        vol_ratio = round(vol_current / vol_prev, 2) if vol_prev > 0 else 0
+
         return {
-            'vol': last_row['成交量'],
+            'vol': vol_current,
+            'vol_prev': vol_prev,  # [新增] 昨日成交量
+            'vol_ratio': vol_ratio,  # [新增] 量比
             'pct_10': round(pct_10, 2),
             'price': current_price,
             'open_pct': round((last_row['开盘'] - prev_row['收盘']) / prev_row['收盘'] * 100, 2),
@@ -329,6 +336,8 @@ def add_sector_leaders(strategy_rows, seen_codes):
                         'code': code, 'name': name, 'tag': final_tag,
                         'link_dragon': get_link_dragon(code),
                         'vol': m_data['vol'],
+                        'vol_prev': m_data.get('vol_prev', 0),  # [新增]
+                        'vol_ratio': m_data.get('vol_ratio', 0),  # [新增]
                         'pct_10': m_data['pct_10'],
                         'price': m_data['price'],
                         'open_pct': m_data['open_pct'],
@@ -383,6 +392,8 @@ def generate_csv():
                 'code': code, 'name': name, 'tag': final_tag,
                 'link_dragon': get_link_dragon(code),
                 'vol': m_data['vol'],
+                'vol_prev': m_data.get('vol_prev', 0),  # [新增]
+                'vol_ratio': m_data.get('vol_ratio', 0),  # [新增]
                 'pct_10': m_data['pct_10'],
                 'price': m_data['price'],
                 'open_pct': m_data['open_pct'],
@@ -484,8 +495,10 @@ def generate_csv():
     if strategy_rows:
         df_save = pd.DataFrame(strategy_rows)
         df_save['sina_code'] = df_save['code'].apply(format_sina)
+
+        # [修改] 更新列名，加入新的 vol_prev 和 vol_ratio
         cols = ['sina_code', 'name', 'tag', 'today_pct', 'turnover', 'open_pct', 'price', 'pct_10', 'link_dragon',
-                'vol', 'code']
+                'vol', 'vol_prev', 'vol_ratio', 'code']
         df_save = df_save.reindex(columns=cols)
 
         # 排序：标签越长可能越重要，或者可以自定义排序逻辑
