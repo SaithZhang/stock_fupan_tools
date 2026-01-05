@@ -1,5 +1,5 @@
 # ==============================================================================
-# 📌 1. F佬/Bo佬 离线复盘生成器 (src/core/pool_generator.py) - v1.2.2 量比增强版
+# 📌 1. F佬/Bo佬 离线复盘生成器 (src/core/pool_generator.py) - v1.3.1 无损增强版
 # ==============================================================================
 
 import akshare as ak
@@ -46,7 +46,7 @@ CORE_KEYWORDS = [
     '机器人', '航天', '军工', '卫星', '低空',
     'AI', '人工智能', '智能体', '算力', 'CPO', '存储',
     '消费电子', '华为', '信创', '数字货币', '数据要素',
-    '文化传媒', '短剧', '多模态', '纺织'
+    '文化传媒', '短剧', '多模态', '纺织', '并购重组', '固态电池', '自动驾驶'
 ]
 
 # 板块中军挖掘列表
@@ -243,7 +243,10 @@ def get_core_concepts(code, name):
 
 
 def get_market_data(code):
-    """获取单只股票的行情快照"""
+    """
+    获取单只股票的行情快照
+    [v1.3 增强] 新增成交额(amount)获取
+    """
     try:
         df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
         if df.empty or len(df) < 2: return None
@@ -266,10 +269,14 @@ def get_market_data(code):
         vol_prev = prev_row['成交量']
         vol_ratio = round(vol_current / vol_prev, 2) if vol_prev > 0 else 0
 
+        # [v1.3 新增] 获取成交额 (单位: 元)
+        amt_current = float(last_row['成交额'])
+
         return {
             'vol': vol_current,
-            'vol_prev': vol_prev,  # [新增] 昨日成交量
-            'vol_ratio': vol_ratio,  # [新增] 量比
+            'amount': amt_current,  # 新增字段
+            'vol_prev': vol_prev,
+            'vol_ratio': vol_ratio,
             'pct_10': round(pct_10, 2),
             'price': current_price,
             'open_pct': round((last_row['开盘'] - prev_row['收盘']) / prev_row['收盘'] * 100, 2),
@@ -279,12 +286,16 @@ def get_market_data(code):
             'low': last_row['最低'],
             'prev_close': prev_row['收盘']
         }
-    except:
+    except Exception as e:
+        # print(f"获取行情失败 {code}: {e}") # 调试用
         return None
 
 
 def check_special_shape(m_data):
-    """检查特殊形态 (地天板/20cm)"""
+    """
+    检查特殊形态 (地天板/20cm)
+    [v1.3 增强] 新增资金面打标 (大战场/流动性差)
+    """
     tags = []
     if m_data:
         low_pct = (m_data['low'] - m_data['prev_close']) / m_data['prev_close'] * 100
@@ -292,6 +303,16 @@ def check_special_shape(m_data):
             tags.append("🔥地天板")
         if m_data['today_pct'] > 14.0:
             tags.append("🔥20cm")
+
+        # [v1.3 新增] 资金标签
+        # 昨成交额 > 20亿 -> 大战场
+        amt_yi = m_data['amount'] / 100000000
+        if amt_yi > 20.0:
+            tags.append("💰大战场")
+        # 昨成交额 < 0.5亿 -> 流动性差
+        elif amt_yi < 0.5:
+            tags.append("⚠️流动性差")
+
     return tags
 
 
@@ -335,9 +356,10 @@ def add_sector_leaders(strategy_rows, seen_codes):
                     strategy_rows.append({
                         'code': code, 'name': name, 'tag': final_tag,
                         'link_dragon': get_link_dragon(code),
-                        'vol': m_data['vol'],
-                        'vol_prev': m_data.get('vol_prev', 0),  # [新增]
-                        'vol_ratio': m_data.get('vol_ratio', 0),  # [新增]
+                        'vol': int(m_data['vol']),  # 强转int
+                        'amount': m_data['amount'],  # 新增
+                        'vol_prev': int(m_data['vol_prev']),
+                        'vol_ratio': m_data.get('vol_ratio', 0),
                         'pct_10': m_data['pct_10'],
                         'price': m_data['price'],
                         'open_pct': m_data['open_pct'],
@@ -345,7 +367,8 @@ def add_sector_leaders(strategy_rows, seen_codes):
                         'turnover': m_data['turnover']
                     })
                     seen_codes.add(code)
-                    print(f"入池: {name} ({final_tag})")
+                    amt_yi = round(m_data['amount'] / 100000000, 2)
+                    print(f"入池: {name} 额:{amt_yi}亿 ({final_tag})")
             time.sleep(0.5)  # 防封
         except Exception as e:
             pass
@@ -391,9 +414,10 @@ def generate_csv():
             strategy_rows.append({
                 'code': code, 'name': name, 'tag': final_tag,
                 'link_dragon': get_link_dragon(code),
-                'vol': m_data['vol'],
-                'vol_prev': m_data.get('vol_prev', 0),  # [新增]
-                'vol_ratio': m_data.get('vol_ratio', 0),  # [新增]
+                'vol': int(m_data['vol']),  # 强转int
+                'amount': m_data['amount'],  # 新增
+                'vol_prev': int(m_data['vol_prev']),
+                'vol_ratio': m_data.get('vol_ratio', 0),
                 'pct_10': m_data['pct_10'],
                 'price': m_data['price'],
                 'open_pct': m_data['open_pct'],
@@ -401,7 +425,8 @@ def generate_csv():
                 'turnover': final_turnover
             })
             seen_codes.add(code)
-            print(f"入池: {name:<8} ({final_tag})")
+            amt_yi = round(m_data['amount'] / 100000000, 2)
+            print(f"入池: {name:<8} 额:{amt_yi}亿 ({final_tag})")
 
     # --- 步骤 1: 抓取涨停 ---
     print(f"\n{Fore.YELLOW}[1/5] 抓取涨停数据 ({date_str})...{Fore.RESET}")
@@ -462,7 +487,7 @@ def generate_csv():
                     orig_tag = item['tag']
                     board_info = orig_tag.split('/')[0] if '板' in orig_tag.split('/')[0] else ''
 
-                    special_tags = [x for x in orig_tag.split('/') if "🔥" in x]
+                    special_tags = [x for x in orig_tag.split('/') if "🔥" in x or "💰" in x or "⚠️" in x]  # [v1.3] 保留新标签
                     existing_concepts = [x for x in orig_tag.split('/') if
                                          x in CORE_KEYWORDS or any(k in x for k in CORE_KEYWORDS)]
 
@@ -496,13 +521,14 @@ def generate_csv():
         df_save = pd.DataFrame(strategy_rows)
         df_save['sina_code'] = df_save['code'].apply(format_sina)
 
-        # [修改] 更新列名，加入新的 vol_prev 和 vol_ratio
-        cols = ['sina_code', 'name', 'tag', 'today_pct', 'turnover', 'open_pct', 'price', 'pct_10', 'link_dragon',
+        # [v1.3 修改] 优先按 amount (资金) 降序排列，大资金在前
+        df_save.sort_values(by='amount', ascending=False, inplace=True)
+
+        # [v1.3 修改] 更新列名，加入 amount
+        cols = ['sina_code', 'name', 'tag', 'amount', 'today_pct', 'turnover', 'open_pct', 'price', 'pct_10',
+                'link_dragon',
                 'vol', 'vol_prev', 'vol_ratio', 'code']
         df_save = df_save.reindex(columns=cols)
-
-        # 排序：标签越长可能越重要，或者可以自定义排序逻辑
-        df_save.sort_values(by=['tag'], ascending=False, inplace=True)
 
         # 1. 保存到历史存档
         filename_dated = f'strategy_pool_{date_str}.csv'
