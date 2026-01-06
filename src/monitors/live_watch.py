@@ -1,16 +1,14 @@
 # ==============================================================================
 # 📌 3. F佬/Bo佬 智能盘中监控系统 (src/monitors/live_watch.py)
-# v6.4 决战版 (本地Table做分母 + 9:25 API做分子)
+# v6.5 决战版 (本地Table做分母 + 9:25 API做分子 + 增加昨日量显示 + 手动刷新)
 # ==============================================================================
 import akshare as ak
 import pandas as pd
 import time
 import os
-import json
 import re
 import sys
 import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from colorama import init, Fore, Style, Back
 
 # 适配 Windows
@@ -33,8 +31,7 @@ if not os.path.exists(CACHE_DIR): os.makedirs(CACHE_DIR)
 THS_DATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'ths', 'Table.txt')
 
 # 缓存
-AUCTION_CACHE = {}
-LOCAL_HISTORY_MAP = {}  # 改名：明确这是历史/背景板数据
+LOCAL_HISTORY_MAP = {}  # 历史/背景板数据
 
 
 # ================= 🛠️ 1. 读取本地作为“昨日基准” =================
@@ -55,8 +52,6 @@ def clean_unit(val):
 def load_yesterday_baseline():
     """
     🔥 核心逻辑：读取 Table.txt，将其视为【昨日数据】
-    这里的 '成交额' = 昨日成交额 (yest_amt)
-    这里的 '流通市值' = 流通市值 (circ_mv)
     """
     global LOCAL_HISTORY_MAP
     if not os.path.exists(THS_DATA_PATH):
@@ -101,18 +96,16 @@ def load_yesterday_baseline():
             count += 1
         except:
             continue
-    print(f"{Fore.GREEN}✅ 已加载 {count} 条基准数据。准备迎接 9:25 实战！{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}✅ 已加载 {count} 条基准数据。{Style.RESET_ALL}")
 
 
 # ================= 🛠️ 2. API 获取 9:25 实时数据 =================
 
 def fetch_live_auction_data(pool):
     """
-    强制联网获取 9:25 的数据
+    强制联网获取实时数据
     """
     codes = [p['code'] for p in pool]
-    # 如果池子太大，分批请求防止超时
-    # 这里简单处理，一次请求所有
     try:
         # akshare 的 spot 接口在 9:25 返回的就是竞价结果
         df = ak.stock_zh_a_spot_em()
@@ -124,14 +117,11 @@ def fetch_live_auction_data(pool):
         res = {}
         for _, row in df.iterrows():
             code = row['代码']
-            # 9:25 时：
-            # 最新价 = 开盘价
-            # 成交额 = 竞价成交额
-            # 涨跌幅 = 竞价涨幅
+            # 9:25 时：最新价=开盘价, 成交额=竞价成交额
             res[code] = {
                 'open_pct': float(row['涨跌幅']),
                 'curr_p': float(row['最新价']),
-                'auction_amt': float(row['成交额'])  # 🔥 此时此刻的成交额 = 竞价金额
+                'auction_amt': float(row['成交额'])
             }
         return res
     except Exception as e:
@@ -166,11 +156,11 @@ def get_decision(item):
     if open_pct < 2.0: return f"弱竞价({open_pct}%)", 0
 
     # 2. 1进2 核心公式
-    # 完美标准：竞价/昨日 > 5% 且 竞价/市值 > 1.5% (根据你的经验调整)
+    # 完美标准：竞价/昨日 > 5% 且 竞价/市值 > 1.5%
     is_perfect = False
 
     # 爆量检测
-    if 5.0 <= ratio_total <= 20.0:  # 竞价占昨日 5%~20% (过低没量，过高是加速/一字)
+    if 5.0 <= ratio_total <= 20.0:  # 竞价占昨日 5%~20%
         if ratio_circ >= 1.5:  # 换手够了
             is_perfect = True
 
@@ -190,7 +180,7 @@ def get_decision(item):
     return f"观察(量{ratio_total:.1f}%)", 40
 
 
-# ================= 🔄 主循环 =================
+# ================= 🔄 分析主逻辑 =================
 
 def load_strategy_pool():
     # 读取 strategy_pool.csv
@@ -204,11 +194,14 @@ def load_strategy_pool():
     return df.to_dict('records')
 
 
-def monitor_loop(pool):
+def run_analysis_once(pool):
+    """执行一次完整的分析并打印表格"""
+    print(f"{Fore.YELLOW}正在获取实时竞价数据...{Style.RESET_ALL}")
+
     # 1. 获取实时数据 (API)
     live_data = fetch_live_auction_data(pool)
     if not live_data:
-        print("\r等待 9:15 开盘数据...", end="")
+        print(f"{Fore.RED}未获取到API数据，请检查网络或稍后再试。{Style.RESET_ALL}")
         return
 
     display_list = []
@@ -216,15 +209,11 @@ def monitor_loop(pool):
     for item in pool:
         code = item['code']
 
-        # 基础信息
-        name = item.get('name', '-')
-
         # 1. 融合昨日数据 (分母)
         if code in LOCAL_HISTORY_MAP:
             item['yest_amt'] = LOCAL_HISTORY_MAP[code]['yest_amt']
             item['circ_mv'] = LOCAL_HISTORY_MAP[code]['circ_mv']
         else:
-            # 如果本地没匹配到，就没法算指标，跳过或给默认
             item['yest_amt'] = 0
             item['circ_mv'] = 0
 
@@ -242,6 +231,7 @@ def monitor_loop(pool):
         decision, score = get_decision(item)
         item['decision'] = decision
         item['score'] = score
+        item['name'] = item.get('name', '-')  # 确保有名字
 
         display_list.append(item)
 
@@ -252,14 +242,16 @@ def monitor_loop(pool):
     os.system('cls' if os.name == 'nt' else 'clear')
     print(
         f"{Back.RED}{Fore.WHITE} ⚔️ 明日决战 9:25 竞价监控 ⚔️ {Style.RESET_ALL} | {datetime.datetime.now().strftime('%H:%M:%S')}")
-    print("=" * 130)
-    print(f"{'代码':<7} {'名称':<8} {'竞价%':<7} {'竞价额(亿)':<11} {'竞/昨%':<8} {'竞/流%':<8} {'AI决策'}")
-    print("-" * 130)
+    print("=" * 140)
+    # 修改表头，增加“昨额(亿)”
+    print(f"{'代码':<7} {'名称':<8} {'竞价%':<7} {'竞价额':<9} {'昨额':<9} {'竞/昨%':<8} {'竞/流%':<8} {'AI决策'}")
+    print("-" * 140)
 
     for p in display_list:
         if p['score'] < 40: continue  # 过滤杂鱼
 
         auc_yi = p['auction_amt'] / 100000000
+        yest_yi = p['yest_amt'] / 100000000  # 新增：昨日成交额(亿)
 
         # 高亮数据
         r_total_str = f"{p['r_total']:.1f}"
@@ -271,8 +263,8 @@ def monitor_loop(pool):
         pct_color = Fore.RED if p['open_pct'] > 0 else Fore.GREEN
 
         print(
-            f"{p['code']:<7} {p['name'][:4]:<8} {pct_color}{p['open_pct']:<7.2f}{Style.RESET_ALL} {auc_yi:<11.2f} {r_total_str:<8} {r_circ_str:<8} {p['decision']}")
-    print("=" * 130)
+            f"{p['code']:<7} {p['name'][:4]:<8} {pct_color}{p['open_pct']:<7.2f}{Style.RESET_ALL} {auc_yi:<9.2f} {yest_yi:<9.2f} {r_total_str:<8} {r_circ_str:<8} {p['decision']}")
+    print("=" * 140)
 
 
 if __name__ == "__main__":
@@ -283,16 +275,18 @@ if __name__ == "__main__":
     pool = load_strategy_pool()
     print(f"监控池大小: {len(pool)} 只")
 
-    print("\n等待 9:25 数据更新...")
-    try:
-        while True:
-            # 只有在 9:15 之后才开始疯狂请求，避免被封
-            now = datetime.datetime.now().strftime("%H:%M")
-            if now >= "09:15":
-                monitor_loop(pool)
-            else:
-                print(f"\r当前时间 {now}，脚本待机中...", end="")
+    if not pool:
+        print("池子为空，请先运行 1_ths_data_process.py 生成策略池。")
+        sys.exit()
 
-            time.sleep(3)  # 3秒刷一次
-    except KeyboardInterrupt:
-        pass
+    # 3. 交互式运行
+    while True:
+        # 执行分析
+        run_analysis_once(pool)
+
+        # 询问是否刷新
+        print("\n[回车] 刷新数据   |   [Q] 退出")
+        choice = input("指令 > ").strip().lower()
+        if choice == 'q':
+            break
+        # 否则循环继续，重新获取数据
