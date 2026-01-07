@@ -1,12 +1,14 @@
 # ==============================================================================
-# 📌 F佬/Bo佬 智能盘后回测系统 (src/core/daily_fupan_v10.py)
-# v10.0 精准回测版 - 已适配“昨日成交额”数据
+# 📌 F佬/Bo佬 智能盘后回测系统 (src/core/daily_fupan.py)
+# v11.0 周期驱动版 - 已集成情绪周期引擎
 # ==============================================================================
 import pandas as pd
 import os
 import re
 import sys
 from colorama import init, Fore, Style, Back
+from src.config import ProjectConfig
+from src.core.emotion_cycle import EmotionalCycleEngine
 
 # 解决 Windows 终端输出编码问题
 if sys.platform == 'win32':
@@ -19,7 +21,10 @@ init(autoreset=True)
 
 # ================= ⚙️ 路径配置 =================
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(CURRENT_DIR))) # Adjust to root properly if needed, usually 2 up from src/core
+# Fix root path calculation: src/core -> src -> project_root
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, '..', '..'))
+
 THS_DATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'ths', 'Table.txt')
 POOL_PATH = os.path.join(PROJECT_ROOT, 'data', 'output', 'strategy_pool.csv')
 
@@ -44,14 +49,15 @@ def clean_code(val):
     return re.sub(r'\D', '', str(val))
 
 
-# ================= 🧠 核心策略逻辑 (F佬精准版) =================
-def get_strategy_decision(item):
+# ================= 🧠 核心策略逻辑 (周期驱动版) =================
+def get_strategy_decision(item, cycle_phase):
+    config = ProjectConfig()
+    
     open_pct = item['open_pct']
     auc_amt = item.get('today_auction_amt', 0)
     circ_mv = item.get('circ_mv', 0)
 
     # 核心数据：昨日成交额
-    # 如果数据源里没有找到昨日成交额，脚本会自动回退到使用当日成交额，并在日志中警告
     yest_amt = item.get('yest_amt', 0)
     if yest_amt == 0:
         yest_amt = item.get('turnover', 0)  # 降级回退
@@ -75,24 +81,30 @@ def get_strategy_decision(item):
 
     if open_pct < -2.0:
         # 深水区：除非极度爆量做弱转强，否则剔除
-        # 弱转强条件：竞价金额占市值 > 1.0% (非常强)
-        if ratio_auc_to_mv > 1.0:
+        if ratio_auc_to_mv > config.WEAK_TO_STRONG_MV_RATIO:
             is_weak_to_strong = True
         else:
             return f"低开({open_pct}%)", 0
+            
     elif open_pct < 1.8:
-        # 平盘震荡区 (-2% ~ 1.8%)：需要有一定量能支撑
-        if ratio_auc_to_mv > 0.8:
+        # 平盘震荡区
+        if ratio_auc_to_mv > config.WEAK_TO_STRONG_SHOCK_MV_RATIO:
             is_weak_to_strong = True
         else:
             fail_reasons.append(f"竞价弱({open_pct}%)")
 
-    # --- 2. 竞价/昨日成交额 (核心接力指标) ---
-    # 标准：3% ~ 18% (推荐 5%~15%)
-    if ratio_auc_to_yest < 3.0:
+    # --- 2. 竞价/昨日成交额 (动态调整) ---
+    # 默认标准
+    min_ratio = config.AUCTION_RATIO_MIN
+    max_ratio = config.AUCTION_RATIO_MAX
+    
+    # 动态调整：如果是退潮期，要求更高承接
+    if cycle_phase == config.PHASE_DECLINE:
+        min_ratio = 5.0 # 提高门槛
+        
+    if ratio_auc_to_yest < min_ratio:
         fail_reasons.append(f"承接弱({ratio_auc_to_yest:.1f}%)")
-    elif ratio_auc_to_yest > 18.0:
-        # 如果不是弱转强，过高的占比可能是一字板炸板或出货
+    elif ratio_auc_to_yest > max_ratio:
         if not is_weak_to_strong:
             fail_reasons.append(f"过热({ratio_auc_to_yest:.1f}%)")
 
@@ -100,9 +112,13 @@ def get_strategy_decision(item):
     mv_yi = circ_mv / 100000000.0
     mv_limit = 0.82
     if mv_yi < 20.0:
-        mv_limit = 0.95  # 微盘
+        mv_limit = 0.95  # 微盘要求更高
     elif 20.0 <= mv_yi < 27.0:
-        mv_limit = 0.78  # 小盘
+        mv_limit = 0.78  
+
+    # 动态调整：如果是冰点期，对微盘股稍微宽容一点，博弈反核
+    if cycle_phase == config.PHASE_ICE_POINT and mv_yi < 20.0:
+        mv_limit = 0.8 # 降低要求
 
     if ratio_auc_to_mv < mv_limit:
         fail_reasons.append(f"量不足({ratio_auc_to_mv:.2f}% < {mv_limit}%)")
@@ -121,8 +137,11 @@ def get_strategy_decision(item):
     else:
         decision = f"{Fore.RED}★ 达标关注{Style.RESET_ALL}"
 
-    # 完美模型加分 (高开 + 占比适中)
-    if open_pct > 4.0 and 5.0 <= ratio_auc_to_yest <= 15.0:
+    # 完美模型加分
+    perfect_min = config.AUCTION_RATIO_RECOMMEND_MIN
+    perfect_max = config.AUCTION_RATIO_RECOMMEND_MAX
+    
+    if open_pct > 4.0 and perfect_min <= ratio_auc_to_yest <= perfect_max:
         score = 95
         decision = f"{Back.RED}{Fore.WHITE} 🔥 完美 {Style.RESET_ALL}"
 
@@ -130,19 +149,63 @@ def get_strategy_decision(item):
 
 
 # ================= 📂 数据加载 =================
+def get_latest_data_path():
+    """
+    智能查找最新的数据文件
+    优先级: Table_YYYYMMDD.txt (按日期最新) > Table.txt
+    """
+    base_dir = os.path.dirname(THS_DATA_PATH)
+    if not os.path.exists(base_dir): return THS_DATA_PATH # Fallback
+    
+    files = os.listdir(base_dir)
+    candidates = []
+    
+    for f in files:
+        # 匹配 Table_20240101.txt 或 Table.txt
+        if f.startswith("Table") and f.endswith(".txt"):
+            full_path = os.path.join(base_dir, f)
+            # 尝试提取日期
+            date_match = re.search(r'20\d{6}', f)
+            date_int = int(date_match.group()) if date_match else 0
+            
+            # 如果是 Table.txt，给个基础权重，或者视为当天/未知
+            if f == "Table.txt":
+                # 获取文件修改时间作为参考，或者给个极大值/极小值
+                # 这里假设 Table.txt 是最新的手动导出
+                mtime = os.path.getmtime(full_path)
+                candidates.append({'path': full_path, 'date': 99999999, 'mtime': mtime})
+            else:
+                candidates.append({'path': full_path, 'date': date_int, 'mtime': 0})
+    
+    if not candidates:
+        return THS_DATA_PATH
+        
+    # 按日期(如果有)或文件名排序
+    # 策略: 优先找文件名带日期的最新一个；如果没有带日期的，用 Table.txt
+    
+    dated_files = [c for c in candidates if c['date'] > 0 and c['date'] != 99999999]
+    if dated_files:
+        dated_files.sort(key=lambda x: x['date'], reverse=True)
+        return dated_files[0]['path']
+        
+    # 如果只有 Table.txt 或其他不带日期的
+    return THS_DATA_PATH
+
 def load_data():
-    if not os.path.exists(THS_DATA_PATH):
-        print(f"{Fore.RED}❌ 错误: 未找到文件 {THS_DATA_PATH}{Style.RESET_ALL}")
+    target_path = get_latest_data_path()
+    
+    if not os.path.exists(target_path):
+        print(f"{Fore.RED}❌ 错误: 未找到数据文件 (搜索路径: {os.path.dirname(THS_DATA_PATH)}){Style.RESET_ALL}")
         return []
 
-    print(f"{Fore.CYAN}📂 正在读取: {THS_DATA_PATH}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}📂 正在读取: {os.path.basename(target_path)}{Style.RESET_ALL}")
 
     try:
-        with open(THS_DATA_PATH, 'r', encoding='gbk') as f:
+        with open(target_path, 'r', encoding='gbk') as f:
             content = f.read()
     except:
         try:
-            with open(THS_DATA_PATH, 'r', encoding='utf-8') as f:
+            with open(target_path, 'r', encoding='utf-8') as f:
                 content = f.read()
         except:
             return []
@@ -175,18 +238,7 @@ def load_data():
     idx_pct = get_col(['涨幅', '涨跌幅'])
     idx_mv = get_col(['流通市值'])
     idx_price = get_col(['现价'])
-
-    # 🔥 关键：寻找昨日成交额
-    # 常见列名：'昨日成交额', '昨成交', 或者带有昨天日期的成交额列
     idx_yest = get_col(['昨日成交额', '昨成交'])
-
-    # 如果没找到显式的“昨日成交额”，尝试找带有日期的列 (如 "成交额(202X-XX-XX)")
-    if idx_yest == -1:
-        # 这里只是简单逻辑，实际可以根据日期判断。
-        # 如果找不到，get_strategy_decision 会自动降级使用当日成交额。
-        pass
-
-        # 当日成交额 (作为备用或参考)
     idx_to = get_col(['当日成交额', '成交额'])
 
     data = []
@@ -211,7 +263,6 @@ def load_data():
         if len(row) < len(headers): continue
         try:
             code = clean_code(row[idx_code])
-
             if is_pool_mode and code not in pool_set: continue
 
             item = {
@@ -223,11 +274,9 @@ def load_data():
                 'turnover': clean_unit(row[idx_to]),
                 'circ_mv': clean_unit(row[idx_mv]),
                 'curr_p': clean_unit(row[idx_price]),
-                # 尝试读取昨日成交额
                 'yest_amt': clean_unit(row[idx_yest]) if idx_yest != -1 else 0
             }
 
-            # 如果没读到昨日成交额，用当日成交额兜底 (并在后续逻辑中处理)
             if item['yest_amt'] == 0 and item['turnover'] > 0:
                 item['yest_amt'] = item['turnover']
                 item['data_source'] = '当日(模拟)'
@@ -243,25 +292,37 @@ def load_data():
 
 # ================= 📈 主程序 =================
 def run_backtest():
+    # 1. 情绪分析
+    try:
+        engine = EmotionalCycleEngine()
+        engine.fetch_market_mood(days=5) # 预热数据
+        phase = engine.determine_phase()
+        suggestion = engine.get_strategy_suggestion()
+        
+        print("\n" + "=" * 110)
+        print(f"🌡️ 市场情绪周期: {Back.BLUE}{Fore.WHITE} {phase} {Style.RESET_ALL}")
+        print(f"💡 策略建议: {Fore.YELLOW}{suggestion}{Style.RESET_ALL}")
+    except Exception as e:
+        print(f"{Fore.RED}⚠️ 情绪引擎初始化失败: {e}{Style.RESET_ALL}")
+        phase = ProjectConfig.PHASE_DIVERGENCE # 默认降级为分歧
+
+    # 2. 数据处理
     data = load_data()
     if not data: return
 
     results = []
     for item in data:
-        decision, score = get_strategy_decision(item)
+        decision, score = get_strategy_decision(item, phase)
         item['decision'] = decision
         item['score'] = score
         results.append(item)
 
     df = pd.DataFrame(results)
     df = df.sort_values(by=['score', 'open_pct'], ascending=[False, False])
-
-    # 筛选出通过初筛的（包括淘汰的，方便看原因）
-    # 但我们重点展示 Score >= 40 的
     display_df = df[df['score'] >= 0]
 
     print("\n" + "=" * 110)
-    print(f"📊 策略回测报告 (v10.0 精准版) | 样本: {len(df)}")
+    print(f"📊 策略回测报告 (v11.0 周期驱动版) | 样本: {len(df)}")
     print(f"{'代码':<8} {'名称':<8} {'竞价%':<8} {'现涨%':<8} {'竞/昨%':<8} {'竞/流%':<8} {'决策结果'}")
     print("-" * 110)
 

@@ -21,6 +21,8 @@ init(autoreset=True)
 # ================= 1. 路径与配置 =================
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(current_dir))
+sys.path.append(PROJECT_ROOT) # Fix import src issue
+
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'data', 'output')
 ARCHIVE_DIR = os.path.join(OUTPUT_DIR, 'archive')
 
@@ -181,11 +183,16 @@ def generate_strategy_pool():
 
     holdings_map = load_text_list(HOLDINGS_PATH)
     f_lao_map = load_text_list(F_LAO_PATH)
+    
+    # --- 辨识度/人气标的加载 ---
+    MANUAL_FOCUS_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'manual_focus.txt')
+    manual_recognition_map = load_text_list(MANUAL_FOCUS_PATH)
 
-    manual_focus = f_lao_map.copy()
-    manual_focus.update(holdings_map)
+    # 合并基本关注（F佬 + 持仓）
+    base_focus = f_lao_map.copy()
+    base_focus.update(holdings_map)
 
-    print(f"{Fore.CYAN}📋 离线生成启动 | 数据源: {len(all_data)}条 | 持仓: {len(holdings_map)} | 关注: {len(f_lao_map)}")
+    print(f"{Fore.CYAN}📋 离线生成启动 | 数据源: {len(all_data)}条 | 持仓: {len(holdings_map)} | 关注: {len(f_lao_map)} | 手动人气: {len(manual_recognition_map)}")
 
     pool = []
 
@@ -196,6 +203,10 @@ def generate_strategy_pool():
 
         raw_tag_str = str(item.get('tag', ''))
         if 'nan' in raw_tag_str: raw_tag_str = ""
+        
+        # --- 0. 全局过滤: 剔除 ST 股 ---
+        if 'ST' in name.upper():
+            continue
 
         base_tags = []
         is_selected = False
@@ -217,7 +228,7 @@ def generate_strategy_pool():
 
         # --- 2. 身份判定 (持仓/关注) ---
         manual_cleaned_tag = ""
-        if code in manual_focus:
+        if code in base_focus:
             is_selected = True
             if code in HOLDING_STRATEGIES:
                 # 特殊策略，直接使用
@@ -236,6 +247,34 @@ def generate_strategy_pool():
                 final_manual = f"F佬/{cleaned_note}" if cleaned_note != "关注" else "F佬/关注"
                 base_tags.append(final_manual)
                 manual_cleaned_tag = final_manual
+        
+        # --- 2.5 辨识度/人气判定 (新增) ---
+        is_popular = False
+        pop_tags = []
+        
+        # A. 手动维护的人气股
+        if code in manual_recognition_map or name in manual_recognition_map:
+            is_popular = True
+            pop_tags.append("★人气")
+            
+        # B. 自动判定：3连板以上高标
+        limit_days = item.get('limit_days', 0)
+        if limit_days >= 3:
+            is_popular = True
+            pop_tags.append(f"★人气/{limit_days}板")
+            
+        # C. 自动判定：大成交额前排 (>=20亿)
+        amount_val = item.get('amount', 0)
+        if amount_val >= 20_0000_0000: # 20亿
+            is_popular = True
+            # Check price trend to avoid fading stocks? User said "when fading delete".
+            # Simple check: must be red (pct>0) or slight green (pct > -3)? 
+            # User example "利欧今天这么大的抛压还能横着". So maybe loose criteria.
+            pop_tags.append("★人气/成交")
+        
+        if is_popular:
+            is_selected = True
+            base_tags.extend(pop_tags)
 
         # --- 3. 标签组装 ---
 
@@ -312,28 +351,92 @@ def generate_strategy_pool():
             }
             pool.append(row)
 
+    # --- 4.5 异动风险计算 (改为读取手动文件) ---
+    print(f"{Fore.MAGENTA}🔎 正在加载异动风险数据 (手动文件)...")
+    try:
+        # 1. 寻找最新的 risk_YYYYMMDD.csv
+        input_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'risk')
+        if not os.path.exists(input_dir):
+            print(f"   ⚠️ 未找到风险文件夹: {input_dir}")
+            risk_files = []
+        else:
+            risk_files = [f for f in os.listdir(input_dir) if f.startswith('risk_') and f.endswith('.csv')]
+        
+        target_risk_file = None
+        if risk_files:
+            # Sort by date in filename risk_20260107.csv
+            risk_files.sort(reverse=True)
+            target_risk_file = os.path.join(input_dir, risk_files[0])
+            print(f"   📄 找到文件: {risk_files[0]}")
+        
+        risk_map = {}
+        if target_risk_file:
+            try:
+                # pandas read
+                risk_df = pd.read_csv(target_risk_file)
+                # Ensure columns exist
+                # Expected: 股票名称,监管规则,当前累计偏离值,异动触发条件,风险等级,数据日期
+                # Map to: risk_level, risk_msg, trigger_next, risk_rule
+                for _, row in risk_df.iterrows():
+                    name = str(row['股票名称']).strip()
+                    risk_map[name] = {
+                        'risk_level': str(row.get('风险等级', '🟢 Safe')),
+                        'risk_msg': str(row.get('当前累计偏离值', '')),
+                        'risk_rule': str(row.get('监管规则', '')),
+                        'trigger_next': str(row.get('异动触发条件', ''))
+                    }
+            except Exception as e:
+                print(f"{Fore.RED}⚠️ 读取CSV失败: {e}")
+
+        # 2. 合并到 pool
+        matches = 0
+        for p in pool:
+            name = p['name']
+            if name in risk_map:
+                info = risk_map[name]
+                p['risk_level'] = info['risk_level']
+                p['risk_msg'] = info['risk_msg']
+                p['risk_rule'] = info['risk_rule']
+                p['trigger_next'] = info['trigger_next']
+                matches += 1
+            else:
+                # Default safe
+                p['risk_level'] = '🟢 Safe'
+                p['risk_msg'] = '-'
+                p['trigger_next'] = '-'
+                
+        print(f"   ✅ 成功匹配 {matches} 只标的风险数据")
+        
+    except Exception as e:
+        print(f"{Fore.RED}⚠️ 风险数据加载异常: {e}")
+
     # --- 5. 导出 ---
     if pool:
         df = pd.DataFrame(pool)
         df.sort_values(by='amount', ascending=False, inplace=True)
 
-        cols = ['sina_code', 'name', 'tag', 'amount', 'today_pct', 'turnover', 'open_pct', 'price', 'pct_10',
-                'link_dragon', 'vol', 'vol_prev', 'vol_ratio', 'code']
+        cols = ['sina_code', 'name', 'tag', 'amount', 'today_pct', 'turnover', 'open_pct', 'price', 
+                'risk_level', 'risk_msg', 'trigger_next', 'risk_rule', # 新增列
+                'pct_10', 'link_dragon', 'vol', 'vol_prev', 'vol_ratio', 'code']
         for c in cols:
             if c not in df.columns: df[c] = 0
         df = df[cols]
 
         date_str = datetime.now().strftime("%Y%m%d")
-        os.makedirs(ARCHIVE_DIR, exist_ok=True)
-
-        save_path = os.path.join(ARCHIVE_DIR, f'strategy_pool_{date_str}.csv')
+        
+        # 改动：直接在 output 目录生成带日期的文件，方便查看
+        dated_filename = f'strategy_pool_{date_str}.csv'
+        dated_path = os.path.join(OUTPUT_DIR, dated_filename)
         latest_path = os.path.join(OUTPUT_DIR, 'strategy_pool.csv')
 
-        df.to_csv(save_path, index=False, encoding='utf-8-sig')
-        shutil.copyfile(save_path, latest_path)
+        df.to_csv(dated_path, index=False, encoding='utf-8-sig')
+        
+        # 同时复制一份为通用名，供其他脚本读取
+        shutil.copyfile(dated_path, latest_path)
 
         print(f"\n{Fore.GREEN}🎉 离线复盘完成！生成标的: {len(pool)} 只")
-        print(f"📄 文件已保存: {latest_path}")
+        print(f"📄 日期文件: {dated_path}")
+        print(f"📄 通用文件: {latest_path} (已更新)")
 
     else:
         print(f"{Fore.RED}❌ 筛选结果为空。")
