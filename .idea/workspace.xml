@@ -4,7 +4,16 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="7f3e5001-998e-49af-adfe-f0b60b419f26" name="Changes" comment="删除无用文件" />
+    <list default="true" id="7f3e5001-998e-49af-adfe-f0b60b419f26" name="Changes" comment="拆分重构">
+      <change afterPath="$PROJECT_DIR$/data/input/note/flao_fupan.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/data/input/risk/risk_20260108.csv" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/data/input/ths/Table-20260108.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data/input/f_lao_list.txt" beforeDir="false" afterPath="$PROJECT_DIR$/data/input/f_lao_list.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data/input/holdings.txt" beforeDir="false" afterPath="$PROJECT_DIR$/data/input/holdings.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data/input/ths_clipboard.txt" beforeDir="false" afterPath="$PROJECT_DIR$/data/input/ths_clipboard.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/core/pool_generator.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pool_generator.py" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -47,8 +56,11 @@
   <component name="PropertiesComponent">{
   &quot;keyToString&quot;: {
     &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python.auction_sniper.executor&quot;: &quot;Run&quot;,
     &quot;Python.bolao_auction.executor&quot;: &quot;Run&quot;,
+    &quot;Python.call_auction_screener.executor&quot;: &quot;Run&quot;,
     &quot;Python.checkname.executor&quot;: &quot;Run&quot;,
+    &quot;Python.daily_fupan.executor&quot;: &quot;Run&quot;,
     &quot;Python.detect_divergence.executor&quot;: &quot;Run&quot;,
     &quot;Python.dragon_detector.executor&quot;: &quot;Run&quot;,
     &quot;Python.fanbao_strategy.executor&quot;: &quot;Run&quot;,
@@ -56,15 +68,24 @@
     &quot;Python.fupan_generator.executor&quot;: &quot;Run&quot;,
     &quot;Python.fupan_v1.executor&quot;: &quot;Run&quot;,
     &quot;Python.get_auctio.executor&quot;: &quot;Run&quot;,
+    &quot;Python.import_ths_data.executor&quot;: &quot;Run&quot;,
+    &quot;Python.intraday_monitor.executor&quot;: &quot;Run&quot;,
     &quot;Python.limit_up_ladder.executor&quot;: &quot;Run&quot;,
+    &quot;Python.live_watch.executor&quot;: &quot;Run&quot;,
+    &quot;Python.live_watch_full.executor&quot;: &quot;Run&quot;,
+    &quot;Python.live_watch_v2.executor&quot;: &quot;Run&quot;,
     &quot;Python.main.executor&quot;: &quot;Run&quot;,
     &quot;Python.market_data.executor&quot;: &quot;Run&quot;,
     &quot;Python.monitor.executor&quot;: &quot;Run&quot;,
     &quot;Python.monitor_bid.executor&quot;: &quot;Run&quot;,
     &quot;Python.nga_crawler.executor&quot;: &quot;Run&quot;,
     &quot;Python.pool_generator.executor&quot;: &quot;Run&quot;,
+    &quot;Python.pool_generator_akshare (1).executor&quot;: &quot;Run&quot;,
+    &quot;Python.pool_generator_akshare.executor&quot;: &quot;Run&quot;,
+    &quot;Python.pool_generator_local.executor&quot;: &quot;Run&quot;,
     &quot;Python.power_equipment_scan.executor&quot;: &quot;Run&quot;,
     &quot;Python.pp.executor&quot;: &quot;Run&quot;,
+    &quot;Python.realtime_strategy.executor&quot;: &quot;Run&quot;,
     &quot;Python.realtime_watch.executor&quot;: &quot;Run&quot;,
     &quot;Python.refactor.executor&quot;: &quot;Run&quot;,
     &quot;Python.run_strategy (1).executor&quot;: &quot;Run&quot;,
@@ -76,9 +97,12 @@
     &quot;Python.sunday_debug_fix.executor&quot;: &quot;Run&quot;,
     &quot;Python.test1111.executor&quot;: &quot;Run&quot;,
     &quot;Python.test12.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_api.executor&quot;: &quot;Run&quot;,
+    &quot;Python.test_auction_api.executor&quot;: &quot;Run&quot;,
     &quot;Python.test_bid.executor&quot;: &quot;Run&quot;,
     &quot;Python.test_fu_pan.executor&quot;: &quot;Run&quot;,
     &quot;Python.testredis.executor&quot;: &quot;Run&quot;,
+    &quot;Python.update_concepts.executor&quot;: &quot;Run&quot;,
     &quot;Python.watch_jingjia.executor&quot;: &quot;Run&quot;,
     &quot;Python.zhang.executor&quot;: &quot;Run&quot;,
     &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
@@ -88,27 +112,30 @@
     &quot;SHARE_PROJECT_CONFIGURATION_FILES&quot;: &quot;true&quot;,
     &quot;WebServerToolWindowFactoryState&quot;: &quot;false&quot;,
     &quot;git-widget-placeholder&quot;: &quot;main&quot;,
-    &quot;last_opened_file_path&quot;: &quot;D:/work/pyproject/choose&quot;,
+    &quot;last_opened_file_path&quot;: &quot;D:/work/pyproject/data/input/ths&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
     &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
     &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
     &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;configurable.group.tools&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;terminal&quot;,
     &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
 }</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
-      <recent name="D:\work\pyproject\choose" />
-      <recent name="D:\work\pyproject" />
+      <recent name="D:\work\pyproject\data\input\ths" />
+      <recent name="D:\work\pyproject\data\input\thx" />
+      <recent name="D:\work\pyproject\data\input\txd" />
+      <recent name="D:\work\pyproject\data\input" />
+      <recent name="D:\work\pyproject\src" />
     </key>
     <key name="MoveFile.RECENT_KEYS">
       <recent name="D:\work\pyproject\archive" />
     </key>
   </component>
-  <component name="RunManager" selected="Python.dragon_detector">
-    <configuration name="dragon_detector" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+  <component name="RunManager" selected="Python.intraday_monitor">
+    <configuration name="call_auction_screener" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="pyproject" />
       <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -117,12 +144,12 @@
         <env name="PYTHONUNBUFFERED" value="1" />
       </envs>
       <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/src/strategies" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/src/monitors" />
       <option name="IS_MODULE_SDK" value="true" />
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
       <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
-      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/strategies/dragon_detector.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/monitors/call_auction_screener.py" />
       <option name="PARAMETERS" value="" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <option name="EMULATE_TERMINAL" value="false" />
@@ -131,7 +158,7 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
-    <configuration name="fupan_generator" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+    <configuration name="intraday_monitor" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="pyproject" />
       <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -140,12 +167,35 @@
         <env name="PYTHONUNBUFFERED" value="1" />
       </envs>
       <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/src/monitors" />
       <option name="IS_MODULE_SDK" value="true" />
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
       <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
-      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/fupan_generator.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/monitors/intraday_monitor.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="live_watch_v2" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="pyproject" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/src/monitors" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/monitors/live_watch_v2.py" />
       <option name="PARAMETERS" value="" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <option name="EMULATE_TERMINAL" value="false" />
@@ -223,7 +273,7 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
-    <configuration name="realtime_watch" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+    <configuration name="realtime_strategy" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="pyproject" />
       <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -237,7 +287,7 @@
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
       <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
-      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/monitors/realtime_watch.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/src/monitors/realtime_strategy.py" />
       <option name="PARAMETERS" value="" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <option name="EMULATE_TERMINAL" value="false" />
@@ -246,36 +296,28 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
-    <configuration name="refactor" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
-      <module name="pyproject" />
-      <option name="ENV_FILES" value="" />
+    <configuration default="true" type="ShConfigurationType">
+      <option name="SCRIPT_TEXT" value="" />
+      <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
+      <option name="SCRIPT_PATH" value="" />
+      <option name="SCRIPT_OPTIONS" value="" />
+      <option name="INDEPENDENT_SCRIPT_WORKING_DIRECTORY" value="true" />
+      <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="INDEPENDENT_INTERPRETER_PATH" value="false" />
+      <option name="INTERPRETER_PATH" value="C:/Program Files/Git/bin/bash.exe" />
       <option name="INTERPRETER_OPTIONS" value="" />
-      <option name="PARENT_ENVS" value="true" />
-      <envs>
-        <env name="PYTHONUNBUFFERED" value="1" />
-      </envs>
-      <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
-      <option name="IS_MODULE_SDK" value="true" />
-      <option name="ADD_CONTENT_ROOTS" value="true" />
-      <option name="ADD_SOURCE_ROOTS" value="true" />
-      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
-      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/refactor.py" />
-      <option name="PARAMETERS" value="" />
-      <option name="SHOW_COMMAND_LINE" value="false" />
-      <option name="EMULATE_TERMINAL" value="false" />
-      <option name="MODULE_MODE" value="false" />
-      <option name="REDIRECT_INPUT" value="false" />
-      <option name="INPUT_FILE" value="" />
+      <option name="EXECUTE_IN_TERMINAL" value="true" />
+      <option name="EXECUTE_SCRIPT_FILE" value="true" />
+      <envs />
       <method v="2" />
     </configuration>
     <recent_temporary>
       <list>
-        <item itemvalue="Python.dragon_detector" />
-        <item itemvalue="Python.realtime_watch" />
+        <item itemvalue="Python.intraday_monitor" />
+        <item itemvalue="Python.call_auction_screener" />
         <item itemvalue="Python.pool_generator" />
-        <item itemvalue="Python.refactor" />
-        <item itemvalue="Python.fupan_generator" />
+        <item itemvalue="Python.realtime_strategy" />
+        <item itemvalue="Python.live_watch_v2" />
       </list>
     </recent_temporary>
   </component>
@@ -325,7 +367,19 @@
       <workItem from="1767055389048" duration="12419000" />
       <workItem from="1767097870432" duration="6051000" />
       <workItem from="1767140742119" duration="18003000" />
-      <workItem from="1767520482375" duration="5250000" />
+      <workItem from="1767520482375" duration="5876000" />
+      <workItem from="1767528375684" duration="412000" />
+      <workItem from="1767528802851" duration="1592000" />
+      <workItem from="1767530436204" duration="91000" />
+      <workItem from="1767530537093" duration="301000" />
+      <workItem from="1767538640992" duration="2840000" />
+      <workItem from="1767574126327" duration="46335000" />
+      <workItem from="1767657724152" duration="13822000" />
+      <workItem from="1767747810328" duration="12553000" />
+      <workItem from="1767778218233" duration="11423000" />
+      <workItem from="1767830679970" duration="20246000" />
+      <workItem from="1767915555630" duration="2358000" />
+      <workItem from="1767919900493" duration="10631000" />
     </task>
     <task id="LOCAL-00001" summary="init">
       <option name="closed" value="true" />
@@ -415,7 +469,111 @@
       <option name="project" value="LOCAL" />
       <updated>1767527544407</updated>
     </task>
-    <option name="localTasksCounter" value="12" />
+    <task id="LOCAL-00012" summary="删除无用文件">
+      <option name="closed" value="true" />
+      <created>1767527803023</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1767527803023</updated>
+    </task>
+    <task id="LOCAL-00013" summary="f佬每日复盘，作为配置提取出来">
+      <option name="closed" value="true" />
+      <created>1767539701380</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1767539701380</updated>
+    </task>
+    <task id="LOCAL-00014" summary="修复量比">
+      <option name="closed" value="true" />
+      <created>1767541376825</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1767541376825</updated>
+    </task>
+    <task id="LOCAL-00015" summary="增加竞价监控脚本915-925">
+      <option name="closed" value="true" />
+      <created>1767586528376</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1767586528376</updated>
+    </task>
+    <task id="LOCAL-00016" summary="增加同花顺概念">
+      <option name="closed" value="true" />
+      <created>1767588764971</created>
+      <option name="number" value="00016" />
+      <option name="presentableId" value="LOCAL-00016" />
+      <option name="project" value="LOCAL" />
+      <updated>1767588764971</updated>
+    </task>
+    <task id="LOCAL-00017" summary="状态精细化">
+      <option name="closed" value="true" />
+      <created>1767588962612</created>
+      <option name="number" value="00017" />
+      <option name="presentableId" value="LOCAL-00017" />
+      <option name="project" value="LOCAL" />
+      <updated>1767588962612</updated>
+    </task>
+    <task id="LOCAL-00018" summary="状态精细化">
+      <option name="closed" value="true" />
+      <created>1767608770244</created>
+      <option name="number" value="00018" />
+      <option name="presentableId" value="LOCAL-00018" />
+      <option name="project" value="LOCAL" />
+      <updated>1767608770244</updated>
+    </task>
+    <task id="LOCAL-00019" summary="拆分">
+      <option name="closed" value="true" />
+      <created>1767619625990</created>
+      <option name="number" value="00019" />
+      <option name="presentableId" value="LOCAL-00019" />
+      <option name="project" value="LOCAL" />
+      <updated>1767619625990</updated>
+    </task>
+    <task id="LOCAL-00020" summary="拆分">
+      <option name="closed" value="true" />
+      <created>1767624465959</created>
+      <option name="number" value="00020" />
+      <option name="presentableId" value="LOCAL-00020" />
+      <option name="project" value="LOCAL" />
+      <updated>1767624465959</updated>
+    </task>
+    <task id="LOCAL-00021" summary="拆分重构">
+      <option name="closed" value="true" />
+      <created>1767624639021</created>
+      <option name="number" value="00021" />
+      <option name="presentableId" value="LOCAL-00021" />
+      <option name="project" value="LOCAL" />
+      <updated>1767624639021</updated>
+    </task>
+    <task id="LOCAL-00022" summary="拆分重构">
+      <option name="closed" value="true" />
+      <created>1767625593939</created>
+      <option name="number" value="00022" />
+      <option name="presentableId" value="LOCAL-00022" />
+      <option name="project" value="LOCAL" />
+      <updated>1767625593939</updated>
+    </task>
+    <task id="LOCAL-00023" summary="拆分重构">
+      <option name="closed" value="true" />
+      <created>1767627151668</created>
+      <option name="number" value="00023" />
+      <option name="presentableId" value="LOCAL-00023" />
+      <option name="project" value="LOCAL" />
+      <updated>1767627151668</updated>
+    </task>
+    <task id="LOCAL-00024" summary="拆分重构">
+      <option name="closed" value="true" />
+      <created>1767711678021</created>
+      <option name="number" value="00024" />
+      <option name="presentableId" value="LOCAL-00024" />
+      <option name="project" value="LOCAL" />
+      <updated>1767711678021</updated>
+    </task>
+    <option name="localTasksCounter" value="25" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -442,7 +600,14 @@
     <MESSAGE value="删除无用脚本" />
     <MESSAGE value="增加版本" />
     <MESSAGE value="删除无用文件" />
-    <option name="LAST_COMMIT_MESSAGE" value="删除无用文件" />
+    <MESSAGE value="f佬每日复盘，作为配置提取出来" />
+    <MESSAGE value="修复量比" />
+    <MESSAGE value="增加竞价监控脚本915-925" />
+    <MESSAGE value="增加同花顺概念" />
+    <MESSAGE value="状态精细化" />
+    <MESSAGE value="拆分" />
+    <MESSAGE value="拆分重构" />
+    <option name="LAST_COMMIT_MESSAGE" value="拆分重构" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
@@ -457,37 +622,60 @@
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/pyproject$smalltobig.coverage" NAME="smalltobig 覆盖结果" MODIFIED="1766992025430" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/choose" />
-    <SUITE FILE_PATH="coverage/pyproject$fupan_v1.coverage" NAME="fupan_v1 覆盖结果" MODIFIED="1767022904020" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$realtime_strategy.coverage" NAME="realtime_strategy 覆盖结果" MODIFIED="1767847765057" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/monitors" />
+    <SUITE FILE_PATH="coverage/pyproject$intraday_monitor.coverage" NAME="intraday_monitor 覆盖结果" MODIFIED="1767948120702" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/monitors" />
     <SUITE FILE_PATH="coverage/pyproject$fupan.coverage" NAME="fupan 覆盖结果" MODIFIED="1766932122730" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/choose" />
-    <SUITE FILE_PATH="coverage/pyproject$select.coverage" NAME="select Coverage Results" MODIFIED="1765802599969" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/pyproject$test_bid.coverage" NAME="test_bid Coverage Results" MODIFIED="1765463016787" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$pool_generator_akshare.coverage" NAME="pool_generator_akshare 覆盖结果" MODIFIED="1767623434773" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/core" />
     <SUITE FILE_PATH="coverage/pyproject$test_fu_pan.coverage" NAME="test_fu_pan Coverage Results" MODIFIED="1765703031064" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/pyproject$power_equipment_scan.coverage" NAME="power_equipment_scan Coverage Results" MODIFIED="1765705338965" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/pyproject$bolao_auction.coverage" NAME="bolao_auction 覆盖结果" MODIFIED="1767022182153" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/pyproject$main.coverage" NAME="main 覆盖结果" MODIFIED="1767097878737" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/pyproject$testredis.coverage" NAME="testredis Coverage Results" MODIFIED="1756302924928" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/pyproject$smalltobig2.coverage" NAME="smalltobig2 覆盖结果" MODIFIED="1766992052521" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/choose" />
-    <SUITE FILE_PATH="coverage/pyproject$watch_jingjia.coverage" NAME="watch_jingjia 覆盖结果" MODIFIED="1767022505006" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$daily_fupan.coverage" NAME="daily_fupan 覆盖结果" MODIFIED="1767711128338" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/core" />
     <SUITE FILE_PATH="coverage/pyproject$fanbao_strategy.coverage" NAME="fanbao_strategy 覆盖结果" MODIFIED="1766931886355" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/choose" />
     <SUITE FILE_PATH="coverage/pyproject$stock_ma5_hunter.coverage" NAME="stock_ma5_hunter Coverage Results" MODIFIED="1765704050042" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$update_concepts.coverage" NAME="update_concepts 覆盖结果" MODIFIED="1767587777724" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/tools" />
     <SUITE FILE_PATH="coverage/pyproject$dragon_detector.coverage" NAME="dragon_detector 覆盖结果" MODIFIED="1767526800457" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/strategies" />
     <SUITE FILE_PATH="coverage/pyproject$limit_up_ladder.coverage" NAME="limit_up_ladder 覆盖结果" MODIFIED="1767021619548" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/choose" />
-    <SUITE FILE_PATH="coverage/pyproject$nga_crawler.coverage" NAME="nga_crawler Coverage Results" MODIFIED="1764080292456" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/pyproject$market_data.coverage" NAME="market_data 覆盖结果" MODIFIED="1765957799893" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/pyproject$monitor.coverage" NAME="monitor 覆盖结果" MODIFIED="1766995421018" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/pyproject$checkname.coverage" NAME="checkname 覆盖结果" MODIFIED="1767520804076" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$market_data.coverage" NAME="market_data 覆盖结果" MODIFIED="1765957799893" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$nga_crawler.coverage" NAME="nga_crawler Coverage Results" MODIFIED="1764080292456" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/pyproject$zhang.coverage" NAME="zhang 覆盖结果" MODIFIED="1765958846048" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/pyproject$pp.coverage" NAME="sunday_debug_fix Coverage Results" MODIFIED="1765707111540" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$test1111.coverage" NAME="test1111 Coverage Results" MODIFIED="1765461904697" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$test12.coverage" NAME="test12 Coverage Results" MODIFIED="1765461960041" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$live_watch.coverage" NAME="live_watch 覆盖结果" MODIFIED="1767708750662" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/monitors" />
+    <SUITE FILE_PATH="coverage/pyproject$detect_divergence.coverage" NAME="detect_divergence 覆盖结果" MODIFIED="1767143011911" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$test_api.coverage" NAME="test_api 覆盖结果" MODIFIED="1767595621868" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src" />
+    <SUITE FILE_PATH="coverage/pyproject$fupan_v1.coverage" NAME="fupan_v1 覆盖结果" MODIFIED="1767022904020" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$pool_generator_local.coverage" NAME="pool_generator_local 覆盖结果" MODIFIED="1767611375490" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/core" />
+    <SUITE FILE_PATH="coverage/pyproject$select.coverage" NAME="select Coverage Results" MODIFIED="1765802599969" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$test_bid.coverage" NAME="test_bid Coverage Results" MODIFIED="1765463016787" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$watch_jingjia.coverage" NAME="watch_jingjia 覆盖结果" MODIFIED="1767022505006" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$call_auction_screener.coverage" NAME="call_auction_screener 覆盖结果" MODIFIED="1767921937992" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/monitors" />
+    <SUITE FILE_PATH="coverage/pyproject$checkname.coverage" NAME="checkname 覆盖结果" MODIFIED="1767520804076" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/pyproject$run_strategy__1_.coverage" NAME="run_strategy (1) Coverage Results" MODIFIED="1765803736345" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$auction_sniper.coverage" NAME="auction_sniper 覆盖结果" MODIFIED="1767587057833" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/monitors" />
     <SUITE FILE_PATH="coverage/pyproject$strategy.coverage" NAME="strategy 覆盖结果" MODIFIED="1765957940102" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
     <SUITE FILE_PATH="coverage/pyproject$fupan_generator.coverage" NAME="fupan_generator 覆盖结果" MODIFIED="1767524985428" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$pool_generator_akshare__1_.coverage" NAME="pool_generator_akshare (1) 覆盖结果" MODIFIED="1767610458895" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/core" />
     <SUITE FILE_PATH="coverage/pyproject$get_auctio.coverage" NAME="get_auctio 覆盖结果" MODIFIED="1766935670073" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/choose" />
-    <SUITE FILE_PATH="coverage/pyproject$test12.coverage" NAME="test12 Coverage Results" MODIFIED="1765461960041" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/pyproject$test1111.coverage" NAME="test1111 Coverage Results" MODIFIED="1765461904697" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/pyproject$test_auction_api.coverage" NAME="test_auction_api 覆盖结果" MODIFIED="1767595357011" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src" />
     <SUITE FILE_PATH="coverage/pyproject$refactor.coverage" NAME="refactor 覆盖结果" MODIFIED="1767525967557" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/pyproject$realtime_watch.coverage" NAME="realtime_watch 覆盖结果" MODIFIED="1767526680903" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/monitors" />
+    <SUITE FILE_PATH="coverage/pyproject$import_ths_data.coverage" NAME="import_ths_data 覆盖结果" MODIFIED="1767588559936" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/tools" />
+    <SUITE FILE_PATH="coverage/pyproject$live_watch_full.coverage" NAME="live_watch_full 覆盖结果" MODIFIED="1767759795532" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/monitors" />
+    <SUITE FILE_PATH="coverage/pyproject$realtime_watch.coverage" NAME="realtime_watch 覆盖结果" MODIFIED="1767618784749" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/monitors" />
     <SUITE FILE_PATH="coverage/pyproject$monitor_bid.coverage" NAME="monitor_bid 覆盖结果" MODIFIED="1767163706342" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/pyproject$detect_divergence.coverage" NAME="detect_divergence 覆盖结果" MODIFIED="1767143011911" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
-    <SUITE FILE_PATH="coverage/pyproject$pool_generator.coverage" NAME="pool_generator 覆盖结果" MODIFIED="1767526562828" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/core" />
+    <SUITE FILE_PATH="coverage/pyproject$live_watch_v2.coverage" NAME="live_watch_v2 覆盖结果" MODIFIED="1767768528000" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/monitors" />
+    <SUITE FILE_PATH="coverage/pyproject$pool_generator.coverage" NAME="pool_generator 覆盖结果" MODIFIED="1767869697805" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/src/core" />
+  </component>
+  <component name="github-copilot-workspace">
+    <instructionFileLocations>
+      <option value=".github/instructions" />
+    </instructionFileLocations>
+    <promptFileLocations>
+      <option value=".github/prompts" />
+    </promptFileLocations>
   </component>
 </project>

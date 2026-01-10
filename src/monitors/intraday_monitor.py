@@ -1,0 +1,320 @@
+# ==============================================================================
+# 📌 F佬/Bo佬 盘中实时作战指挥室 (src/monitors/intraday_monitor.py)
+# v1.1 核心辅导版 - 引入 post-market 模块共享数据加载
+
+# ==============================================================================
+import pandas as pd
+import akshare as ak
+import os
+import sys
+import re
+import time
+import datetime
+from colorama import init, Fore, Style, Back
+
+# 解决 Windows 终端输出编码问题
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+init(autoreset=True)
+
+# ================= ⚙️ 路径配置 =================
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
+
+# Append PROJECT_ROOT to sys.path to allow imports from src
+sys.path.append(PROJECT_ROOT)
+
+from src.utils.data_loader import load_holdings, load_pool, load_history_basics, load_manual_focus, HOLDINGS_PATH, STRATEGY_POOL_PATH, get_latest_history_path
+
+
+# 引入核心模块
+sys.path.append(os.path.join(PROJECT_ROOT, 'src', 'core'))
+try:
+    from emotion_cycle import EmotionalCycleEngine
+except:
+    pass
+
+# 数据加载函数已移至 src/utils/data_loader.py
+
+
+# ================= 🚀 核心策略 =================
+
+def get_market_mood():
+    """获取市场情绪：领涨板块 & 全板块列表"""
+    try:
+        df = ak.stock_board_industry_name_em()
+        # 按涨跌幅排序
+        df = df.sort_values(by='涨跌幅', ascending=False)
+        
+        # 1. 领涨前5
+        top_5 = df.head(5)
+        top_sectors = [f"{row['板块名称']}({row['涨跌幅']}%)" for _, row in top_5.iterrows()]
+        summary = " 🔥 ".join(top_sectors)
+        
+        # 2. 全市场概览 (紧凑排版)
+        lines = []
+        items = []
+        for i, (_, row) in enumerate(df.iterrows()):
+            name = row['板块名称']
+            pct = row['涨跌幅']
+            
+            # 颜色装饰
+            c = Fore.RED if pct > 0 else (Fore.GREEN if pct < 0 else Fore.WHITE)
+            item_str = f"{c}{name}:{pct:>5.2f}%{Style.RESET_ALL}"
+            items.append(item_str)
+            
+            # 每行显示 6 个
+            if (i + 1) % 6 == 0:
+                lines.append("  ".join(items))
+                items = []
+        
+        if items: lines.append("  ".join(items))
+        
+        full_detail = "\n".join(lines)
+        return summary, full_detail
+    except Exception as e:
+        return "数据获取中...", f"获取失败: {e}"
+
+def get_index_status():
+    """获取大盘状态：上证指数、成交额、量比"""
+    info = {
+         'price': 0.0, 'pct': 0.0, 
+         'sh_amt': 0.0, 'sz_amt': 0.0,
+         'sh_vr': 0.0
+    }
+    try:
+        # ak.stock_zh_index_spot_em(symbol="沪深重要指数") 包含上证指数、深证成指
+        df = ak.stock_zh_index_spot_em(symbol="沪深重要指数")
+        
+        if not df.empty:
+            # 上证指数
+            sh = df[df['名称'] == '上证指数']
+            if not sh.empty:
+                item = sh.iloc[0]
+                info['price'] = float(item['最新价'])
+                info['pct'] = float(item['涨跌幅'])
+                info['sh_amt'] = float(item['成交额'])
+                info['sh_vr'] = float(item.get('量比', 0))
+            
+            # 深证成指 (只需要成交额)
+            sz = df[df['名称'] == '深证成指']
+            if not sz.empty:
+                item = sz.iloc[0]
+                info['sz_amt'] = float(item['成交额'])
+                
+    except:
+        pass
+    return info
+
+def check_signals(row, holding_info, tag, index_pct, current_time_str):
+    """
+    分析单只股票，生成信号
+    row: akshare 实时数据行
+    holding_info: 持仓信息 {'cost': x, 'vol': x} 或 None
+    tag: 策略标签
+    index_pct: 大盘涨跌幅
+    """
+    is_holding = holding_info is not None
+    cost = holding_info.get('cost', 0) if is_holding else 0
+    
+    try:
+        price = float(row['最新价'])
+        pct = float(row['涨跌幅'])
+        high = float(row['最高'])
+        low = float(row['最低'])
+        open_p = float(row['今开'])
+        
+        vr = float(row.get('量比', 0))
+        turnover = float(row.get('换手率', 0))
+        
+        amt = float(row['成交额'])
+        vol = float(row['成交量'])
+        vwap = price 
+        if vol > 0: vwap = amt / (vol * 100)
+            
+    except:
+        return (0, "", "", 0.0, 0.0) # Level, Text, Color, Bias, CostRatio
+
+    signals = []
+    
+    # 指标计算
+    bias = (price - vwap) / vwap * 100
+    cost_ratio = (price - cost) / cost * 100 if cost > 0 else 0.0
+    
+    hour = int(current_time_str.split(':')[0])
+    
+    # --- 0. 环境风控 ---
+    if hour >= 14 and index_pct < -0.5:
+        # 尾盘大盘跳水，持仓需谨慎
+        if is_holding: signals.append((5, "⚠️尾盘防守", Fore.YELLOW))
+    
+    # --- 1. 持仓股策略 ---
+    if is_holding:
+        # A. 卖点
+        if bias > 3.0: signals.append((8, "🚀急拉卖T", Fore.MAGENTA))
+        if bias > 5.0: signals.append((9, "🚀火箭偏离", Back.MAGENTA))
+        
+        # B. 买点
+        if bias < -3.0: 
+            # 只有在大盘不差的时候才敢接
+            if index_pct > -0.3:
+                signals.append((8, "🌊急杀买T", Fore.CYAN))
+            else:
+                signals.append((4, "🌊急杀(大盘弱)", Fore.WHITE))
+            
+        # C. 止损/止盈
+        if pct < -4.0 and cost_ratio < -2.0:
+             signals.append((7, "⚠️止损提醒", Fore.RED))
+
+    # --- 2. 策略池策略 ---
+    else:
+        # A. 弱转强
+        if open_p < vwap and price > vwap and pct > 1.0:
+            if vr > 1.0: signals.append((6, "★弱转强", Fore.RED))
+            
+        # B. 均线承接
+        if abs(bias) < 0.5 and pct > 0: 
+             signals.append((4, "👀均线承接", Fore.YELLOW))
+             
+        # C. 人气扫板
+        if "人气" in tag and pct > 8.0 and pct < 9.8:
+            signals.append((7, "🔥人气扫板", Fore.RED))
+
+    # 没信号但有异常
+    if not signals and vr > 2.5 and pct > 3.0:
+        signals.append((3, "👀放量拉升", Fore.WHITE))
+
+    if not signals: return (0, "观察", Fore.WHITE, bias, cost_ratio)
+    signals.sort(key=lambda x: x[0], reverse=True)
+    
+    return (signals[0][0], signals[0][1], signals[0][2], bias, cost_ratio)
+
+
+def main():
+    print(f"\n{Back.RED}{Fore.WHITE} F佬 · 作战指挥室 (实时监控) {Style.RESET_ALL}")
+    
+    # 1. 加载名单
+    holdings = load_holdings()
+    pool_map = load_pool()
+    manual_map = load_manual_focus() # 加载手动关注，用于强制显示
+    history = load_history_basics() # 用来补全名称
+    
+    # 合并监控名单
+    monitor_codes = set(holdings) | set(pool_map.keys())
+    monitor_list = list(monitor_codes)
+    
+    print(f"🎯 监控目标: {len(monitor_list)} 只 (持仓 {len(holdings)} | 策略 {len(pool_map)})")
+    
+    # 获取行情
+    df = ak.stock_zh_a_spot_em()
+    
+    # 获取大盘情绪
+    idx_info = get_index_status()
+    index_price = idx_info['price']
+    index_pct = idx_info['pct']
+    # 计算总成交额 (万亿)
+    total_amt = idx_info['sh_amt'] + idx_info['sz_amt']
+    total_amt_str = f"{total_amt/1000000000000:.2f}万亿" if total_amt > 1000000000000 else f"{total_amt/100000000:.0f}亿"
+    sh_vr = idx_info['sh_vr']
+    
+    sector_summary, sector_detail = get_market_mood()
+    
+    current_time = datetime.datetime.now().strftime('%H:%M:%S')
+    
+    # ... (中间省略: 过滤与计算)
+    df_target = df[df['代码'].isin(monitor_list)].copy()
+    display_list = []
+    
+    for _, row in df_target.iterrows():
+        code = row['代码']
+        holding_info = holdings.get(code)
+        is_hold = holding_info is not None
+        tag = pool_map.get(code, "持仓" if is_hold else "")
+        
+        name = row['名称']
+        price = row['最新价']
+        pct = row['涨跌幅']
+        
+        # 5分钟涨速
+        speed5 = float(row.get('5分钟涨跌', 0))
+        
+        sig_level, sig_text, sig_color, bias, cost_ratio = check_signals(row, holding_info, tag, index_pct, current_time)
+        
+        is_manual = code in manual_map
+        if is_hold or is_manual or sig_level >= 3:
+            display_list.append({
+                'code': code,
+                'name': name,
+                'price': price,
+                'pct': pct,
+                'speed5': speed5,
+                'bias': bias,
+                'cost': holding_info['cost'] if is_hold else 0,
+                'tag': tag,
+                'signal': sig_text,
+                'color': sig_color,
+                'is_hold': is_hold,
+                'vr': float(row.get('量比', 0)),
+                'to': float(row.get('换手率', 0))
+            })
+            
+    # 排序
+    display_list.sort(key=lambda x: (not x['is_hold'], -x['pct']))
+    
+    # 头部信息
+    idx_color = Fore.RED if index_pct > 0 else Fore.GREEN
+    # 格式化头部信息：上证 + 量比 + 成交额
+    header_info = f"上证: {idx_color}{index_price} ({index_pct}%) {Style.RESET_ALL} | 量比: {sh_vr} | 成交: {total_amt_str}"
+    print(f"\n{Back.BLUE}{Fore.WHITE} F佬 · 指挥室 {current_time} {Style.RESET_ALL} | {header_info}")
+    print(f"{Fore.YELLOW}🔥 领涨: {sector_summary}{Style.RESET_ALL}")
+    print("-" * 120)
+    print(f"{'代码':<8} {'名称':<8} {'涨幅%':<8} {'5分%':<7} {'现价':<8} {'乖离%':<7} {'成本/状态':<10} {'量比':<6} {'信号/属性'}")
+    print("-" * 120)
+    
+    for item in display_list:
+        c_pct = Fore.RED if item['pct'] > 0 else Fore.GREEN
+        
+        # 标记: 持仓(黄底黑字) > 手动(蓝底白字) > 普通
+        c_mark = ""
+        if item['is_hold']:
+            c_mark = Back.YELLOW + Fore.BLACK
+        elif item['code'] in manual_map:
+            c_mark = Back.BLUE + Fore.WHITE
+            
+        code_str = f"{c_mark}{item['code']}{Style.RESET_ALL}"
+        
+        # 5分钟涨速颜色
+        s5 = item['speed5']
+        c_speed = Fore.RED if s5 > 1 else (Fore.MAGENTA if s5 > 2 else (Fore.GREEN if s5 < -1 else ""))
+        
+        cost_str = ""
+        if item['is_hold']:
+                cost_str = f"{item['cost']:.2f}"
+        else:
+                cost_str = "均线上" if item['bias'] > 0 else "均线下"
+                     
+        bias_val = item['bias']
+        c_bias = Fore.MAGENTA if bias_val > 3 else (Fore.CYAN if bias_val < -3 else "")
+        
+        print(
+            f"{code_str:<16} " 
+            f"{item['name'][:4]:<8} "
+            f"{c_pct}{item['pct']:<8.2f}{Style.RESET_ALL} "
+            f"{c_speed}{s5:<7.2f}{Style.RESET_ALL} "
+            f"{item['price']:<8} "
+            f"{c_bias}{bias_val:<7.2f}{Style.RESET_ALL} "
+            f"{cost_str:<10} "
+            f"{item.get('vr', 0):<6.1f} "
+            f"{item['color']}{item['signal']} {Style.RESET_ALL}{item['tag'][:5]}"
+        )
+        
+    print("-" * 110)
+    print("🚀 F-Guide: 持仓急拉卖T，急杀买T；断板及时离场。")
+    print("\n📊 全行业板块涨跌幅一览:")
+    print(sector_detail)
+
+if __name__ == "__main__":
+    main()
