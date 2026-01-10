@@ -70,6 +70,121 @@ def load_text_list(filepath):
     return mapping
 
 
+def load_yesterday_pool():
+    """
+    加载最近一期的策略池文件 (不含今日)
+    目的是寻找昨日炸板的股票
+    返回: {code: {'amount': float, 'tag': str}}
+    """
+    if not os.path.exists(OUTPUT_DIR): return {}
+    
+    # 1. 查找所有 strategy_pool_YYYYMMDD.csv
+    files = []
+    today_str = datetime.now().strftime("%Y%m%d")
+    
+    for f in os.listdir(OUTPUT_DIR):
+        if f.startswith('strategy_pool_') and f.endswith('.csv'):
+            date_part = f.replace('strategy_pool_', '').replace('.csv', '')
+            if date_part.isdigit() and date_part < today_str:
+                files.append({'path': os.path.join(OUTPUT_DIR, f), 'date': date_part})
+                
+    if not files:
+        # 尝试 archive 目录
+        if os.path.exists(ARCHIVE_DIR):
+            for f in os.listdir(ARCHIVE_DIR):
+                if f.startswith('strategy_pool_') and f.endswith('.csv'):
+                    date_part = f.replace('strategy_pool_', '').replace('.csv', '')
+                    if date_part.isdigit() and date_part < today_str:
+                        files.append({'path': os.path.join(ARCHIVE_DIR, f), 'date': date_part})
+
+    if not files:
+        print(f"{Fore.YELLOW}⚠️ 未找到昨日(或更早)的策略池文件，无法执行[断板反包]策略")
+        return {}
+        
+    # 2. 排序取最新的一个
+    files.sort(key=lambda x: x['date'], reverse=True)
+    target_file = files[0]['path']
+    print(f"{Fore.BLUE}🔙 回溯历史数据: {os.path.basename(target_file)}")
+    
+    res_map = {}
+    try:
+        df = pd.read_csv(target_file, dtype={'code': str, 'sina_code': str})
+        # 必须列: code, tag, amount
+        for _, row in df.iterrows():
+            c = str(row['code']).zfill(6)
+            tag = str(row.get('tag', ''))
+            
+            # 筛选昨日炸板股 (tag中包含"炸板")
+            # 注意：昨日必须是真的炸板了，而不是"反包预期"这种
+            # 简单判断: 只要 tag 里有 "炸板" 字样，就纳入观察池
+            if "炸板" in tag:
+                res_map[c] = {
+                    'amount': float(row.get('amount', 0)),
+                    'tag': tag
+                }
+    except Exception as e:
+        print(f"{Fore.RED}❌ 读取历史文件失败: {e}")
+        
+    return res_map
+
+
+def load_lhb_info():
+    """
+    加载龙虎榜数据 & 游资数据
+    Returns:
+       lhb_codes: set of codes (str 6 digits)
+       seat_map: {stock_name: [tags]}
+    """
+    lhb_dir = os.path.join(PROJECT_ROOT, 'data', 'output', 'lhb')
+    lhb_path = os.path.join(lhb_dir, 'lhb_latest.csv')
+    seat_path = os.path.join(lhb_dir, 'lhb_famous_latest.csv')
+    
+    lhb_codes = set()
+    if os.path.exists(lhb_path):
+        try:
+             df = pd.read_csv(lhb_path, dtype=str)
+             # 同样清洗下 input
+             if '代码' in df.columns:
+                 # 确保是6位
+                 lhb_codes = set(df['代码'].apply(lambda x: str(x).strip().zfill(6)).tolist())
+        except Exception as e:
+            print(f"{Fore.RED}❌ LHB加载失败: {e}")
+
+    seat_map = {}
+    if os.path.exists(seat_path):
+         try:
+             df = pd.read_csv(seat_path, dtype=str)
+             import re
+             
+             # Columns: 游资标签, 营业部名称, 买入股票, 卖出股票...
+             for _, row in df.iterrows():
+                 label = row['游资标签']
+                 
+                 # 1. 处理买入
+                 buys = str(row.get('买入股票', '')).replace('nan', '')
+                 stock_names_b = re.split(r'[ ,、]+', buys)
+                 for s in stock_names_b:
+                     s = s.strip()
+                     if not s: continue
+                     if s not in seat_map: seat_map[s] = set()
+                     seat_map[s].add(f"💰{label}入场")
+                     
+                 # 2. 处理卖出
+                 sells = str(row.get('卖出股票', '')).replace('nan', '')
+                 stock_names_s = re.split(r'[ ,、]+', sells)
+                 for s in stock_names_s:
+                     s = s.strip()
+                     if not s: continue
+                     if s not in seat_map: seat_map[s] = set()
+                     seat_map[s].add(f"🏃{label}离场")
+                     
+         except Exception as e:
+            print(f"{Fore.RED}❌ 游资数据加载失败: {e}")
+            
+    return lhb_codes, seat_map
+
+
+
 def format_sina(code):
     code = str(code)
     if code.startswith('6'): return f"sh{code}"
@@ -188,11 +303,17 @@ def generate_strategy_pool():
     MANUAL_FOCUS_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'manual_focus.txt')
     manual_recognition_map = load_text_list(MANUAL_FOCUS_PATH)
 
+    # --- 昨日炸板数据加载 (新策略) ---
+    broken_pool_map = load_yesterday_pool()
+    
+    # --- 龙虎榜/游资数据加载 (新策略) ---
+    lhb_codes, lhb_seat_map = load_lhb_info()
+
     # 合并基本关注（F佬 + 持仓）
     base_focus = f_lao_map.copy()
     base_focus.update(holdings_map)
 
-    print(f"{Fore.CYAN}📋 离线生成启动 | 数据源: {len(all_data)}条 | 持仓: {len(holdings_map)} | 关注: {len(f_lao_map)} | 手动人气: {len(manual_recognition_map)}")
+    print(f"{Fore.CYAN}📋 离线生成启动 | 数据源: {len(all_data)}条 | 持仓: {len(holdings_map)} | 关注: {len(f_lao_map)} | LHB: {len(lhb_codes)}")
 
     pool = []
 
@@ -247,34 +368,60 @@ def generate_strategy_pool():
                 final_manual = f"F佬/{cleaned_note}" if cleaned_note != "关注" else "F佬/关注"
                 base_tags.append(final_manual)
                 manual_cleaned_tag = final_manual
+                
+        # --- 2.1 龙虎榜 & 游资判定 (新增) ---
+        if code in lhb_codes:
+            is_selected = True
+            base_tags.append("🐉龙虎榜")
+        
+        if name in lhb_seat_map:
+            is_selected = True
+            # 添加游资标签 (已去重)
+            seat_tags = sorted(list(lhb_seat_map[name]))
+            base_tags.extend(seat_tags)
         
         # --- 2.5 辨识度/人气判定 (新增) ---
         is_popular = False
-        pop_tags = []
+        pop_reasons = set()
         
         # A. 手动维护的人气股
         if code in manual_recognition_map or name in manual_recognition_map:
             is_popular = True
-            pop_tags.append("★人气")
             
         # B. 自动判定：3连板以上高标
         limit_days = item.get('limit_days', 0)
         if limit_days >= 3:
             is_popular = True
-            pop_tags.append(f"★人气/{limit_days}板")
+            # 板数后面会自动加，这里不重复加
             
         # C. 自动判定：大成交额前排 (>=20亿)
         amount_val = item.get('amount', 0)
         if amount_val >= 20_0000_0000: # 20亿
             is_popular = True
-            # Check price trend to avoid fading stocks? User said "when fading delete".
-            # Simple check: must be red (pct>0) or slight green (pct > -3)? 
-            # User example "利欧今天这么大的抛压还能横着". So maybe loose criteria.
-            pop_tags.append("★人气/成交")
+            pop_reasons.add("成交") 
         
         if is_popular:
             is_selected = True
-            base_tags.extend(pop_tags)
+            base_tags.append("★人气")
+            if pop_reasons:
+                base_tags.extend(sorted(list(pop_reasons)))
+
+        # --- 2.6 断板反包 (新策略) ---
+        # 逻辑：昨日在炸板池 + 今日收红 (最好爆量)
+        if code in broken_pool_map:
+            # 只要是红盘，就纳入
+            if pct > 0:
+                is_selected = True
+                
+                # 计算是否爆量
+                yest_amt = broken_pool_map[code]['amount']
+                curr_amt = item.get('amount', 0)
+                
+                label = "🔥焚诀"
+                if yest_amt > 10000 and curr_amt > yest_amt: # 简单判断成交额增加
+                     label += "/爆量"
+                
+                base_tags.append(label)
 
         # --- 3. 标签组装 ---
 
@@ -292,7 +439,7 @@ def generate_strategy_pool():
 
         if is_zb and pct > -7.0:
             is_selected = True
-            base_tags.append("炸板/反包预期")
+            base_tags.append("👀焚诀预期/炸板")
 
         # 跌停
         if pct <= -9.0:
@@ -332,7 +479,11 @@ def generate_strategy_pool():
 
             # 再次清理可能产生的双斜杠
             final_tag_str = final_tag_str.replace('//', '/')
-
+            
+            # --- 最终 Tag 修正: 确保 焚诀 关键字显眼 ---
+            # 如果是 断板反包 (已在 base_tags 里处理了，但为了保险起见，可以在这里统一替换)
+            final_tag_str = final_tag_str.replace("🔥断板反包", "🔥焚诀")
+            
             row = {
                 'sina_code': format_sina(code),
                 'name': name,
