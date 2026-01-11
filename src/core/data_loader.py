@@ -471,6 +471,7 @@ def load_ths_data_enhanced():
     col_amt = next((c for c in df.columns if '成交额' in c), None)
     col_mv = next((c for c in df.columns if '流通市值' in c), None)
     col_pct = next((c for c in df.columns if '涨幅' in c and '竞价' not in c and '10' not in c), None)
+    col_auc_amt = next((c for c in df.columns if '早盘竞价金额' in c or '竞价金额' in c), None) # Try to find bid amount
     
     # 连板提取
     col_zt = next((c for c in df.columns if '连板' in c or '几天几板' in c), None)
@@ -498,13 +499,18 @@ def load_ths_data_enhanced():
                 nums = re.findall(r'\d+', b_str)
                 if nums: boards = int(nums[-1]) # 取最后一个数字 usually "3天2板" -> 2
             
+            auc_amt = 0.0
+            if col_auc_amt:
+                auc_amt = safe_float(row.get(col_auc_amt))
+            
             if amt <= 0: cnt_zero += 1
             
             res_map[code] = {
                 'yest_amt': amt,
                 'circ_mv': mv,
                 'yest_pct': pct,
-                'boards': boards
+                'boards': boards,
+                'yest_bid_amt': auc_amt # Yesterday's Bid Amount
             }
         except:
             continue

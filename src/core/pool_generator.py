@@ -15,12 +15,17 @@ from colorama import init, Fore
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
+from data_loader import get_merged_data, load_yesterday_ths_data
+from market_data import MarketDataManager
+
+# Add project root to path for strategies import if needed
+# But assume standard import works if we fix the paths later or relies on existing sys.path
 try:
-    from .data_loader import get_merged_data, load_yesterday_ths_data
-    from .market_data import MarketDataManager
+    from strategies.f_lao_model import load_ths_history, check_fen_jue
 except ImportError:
-    from data_loader import get_merged_data, load_yesterday_ths_data
-    from market_data import MarketDataManager
+    # Fallback if run from different dir
+    sys.path.append(os.path.join(os.path.dirname(os.path.dirname(current_dir)), 'src')) 
+    from strategies.f_lao_model import load_ths_history, check_fen_jue
 # --------------
 
 init(autoreset=True)
@@ -411,10 +416,14 @@ def generate_strategy_pool():
     yest_full_data = load_yesterday_ths_data()
 
     # --- 大盘/情绪数据加载 (New) ---
-    print(f"{Fore.MAGENTA}📊 正在加载大盘数据...")
     dapan_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'dapan')
     md_manager = MarketDataManager(dapan_dir)
     market_loaded = md_manager.load_data()
+    
+    # --- F佬模型历史数据加载 (New) ---
+    print(f"{Fore.MAGENTA}� 正在加载最近5日历史数据 (for F佬模型)...")
+    ths_input_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'ths')
+    history_map = load_ths_history(ths_input_dir, days=5)
     
     # Calculate enhanced stats
     market_stats = calculate_market_stats(all_data, yest_full_data)
@@ -540,11 +549,19 @@ def generate_strategy_pool():
                 yest_amt = broken_pool_map[code]['amount']
                 curr_amt = item.get('amount', 0)
                 
-                label = "🔥焚诀"
+                label = "🔥断板反包"
                 if yest_amt > 10000 and curr_amt > yest_amt: # 简单判断成交额增加
                      label += "/爆量"
                 
                 base_tags.append(label)
+
+        # --- 2.7 F佬焚诀模型 (New) ---
+        if code in history_map:
+             f_tags = check_fen_jue(history_map[code])
+             if f_tags:
+                 base_tags.extend(f_tags)
+                 is_selected = True # model selected it
+
 
         # --- 3. 标签组装 ---
 
@@ -622,8 +639,8 @@ def generate_strategy_pool():
             final_tag_str = final_tag_str.replace('//', '/')
             
             # --- 最终 Tag 修正: 确保 焚诀 关键字显眼 ---
-            # 如果是 断板反包 (已在 base_tags 里处理了，但为了保险起见，可以在这里统一替换)
-            final_tag_str = final_tag_str.replace("🔥断板反包", "🔥焚诀")
+            final_tag_str = final_tag_str.replace("🔥断板反包", "🔥A大焚诀") 
+            # If explicit "🔥A大焚诀" from model, it will be kept. 
             
             row = {
                 'sina_code': format_sina(code),

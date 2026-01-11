@@ -55,7 +55,15 @@ try:
 except ImportError:
     # 尝试调整 path
     sys.path.append(os.path.join(PROJECT_ROOT, 'src', 'core'))
+    sys.path.append(os.path.join(PROJECT_ROOT, 'src', 'core'))
     from data_loader import load_history_map
+
+# 引入策略模块
+try:
+    from src.strategies.ddd_mode import check_ddd_strategy
+except ImportError:
+    sys.path.append(os.path.join(PROJECT_ROOT, 'src', 'strategies'))
+    from ddd_mode import check_ddd_strategy
 
 def load_history_data():
     """Wrapper specifically for this script's display messages"""
@@ -221,32 +229,95 @@ def analyze_stock(row, history_info, pool_map, phase):
             'r_mv': ratio_mv, 'circ_mv': circ_mv
         }
 
-    # --- 规则1: 竞价涨幅 (含弱转强) ---
-    if open_pct < -2.0:
-        # 深水区
-        if ratio_mv > WTS_DEEP_RATIO:
+    # --- 规则X: DDD 竞价模式 (独立逻辑) ---
+    ddd_score, ddd_dec, ddd_tag = check_ddd_strategy(row, history_info[code])
+    if ddd_score > 0:
+        # DDD 模式命中
+        decision = ddd_dec
+        score = ddd_score
+        # 如果还有其他tag，叠加
+        if ddd_tag: decision += f" {Fore.BLUE}{ddd_tag}{Style.RESET_ALL}"
+        
+        # 直接返回，不再跑下面的普通逻辑，或者结合？
+        # User requested "Strictly isolated". So if passes, we can return.
+        # But we also have "Pool" logic.
+        
+        in_pool_mark = ""
+        if code in pool_map:
+            score += 5 
+            in_pool_mark = f"{Back.MAGENTA}{Fore.WHITE} 池 {Style.RESET_ALL}"
+        
+        decision += in_pool_mark
+        
+        return {
+            'code': code, 'name': name, 'score': score, 'decision': decision,
+            'open_pct': open_pct, 'auc': auc_amt, 'r_yest': ratio_yest, 
+            'r_mv': ratio_mv, 'yest_pct': yest_pct, 'boards': boards, 
+            'circ_mv': circ_mv, 'tag': pool_map.get(code, "")
+        }
+
+    # --- 规则1: 竞价涨幅 (F佬/A大 策略适配) ---
+    pool_tag = pool_map.get(code, "")
+    
+    # A. 深水低吸 (F佬核心)
+    # 针对 "分歧低吸" 或 "趋势强" 的票，如果深水开盘，是机会
+    if open_pct <= -5.0:
+        if "低吸" in pool_tag or "趋势" in pool_tag or "F佬" in pool_tag:
             is_weak_to_strong = True
+            decision = f"{Fore.GREEN}✅ 深水低吸{Style.RESET_ALL}"
+            score = 88
         else:
-            fail_msg = f"低开({open_pct}%)"
+            fail_msg = f"深水({open_pct}%)"
+            
+    # B. A大焚诀 (断板反包)
+    # 核心: 必须红盘 (open_pct > 0)
+    elif "A大焚诀" in pool_tag:
+        if open_pct > 0:
+            is_weak_to_strong = True # 视为转强
+            decision = f"{Fore.RED}🔥 A大反包{Style.RESET_ALL}"
+            # 爆量加分
+            if ratio_mv > 1.0: 
+                 decision += "/爆量"
+                 score = 95
+            else:
+                 score = 90
+        else:
+            # 绿盘开，等待盘中翻红
+            fail_msg = f"未翻红({open_pct}%)"
+            score = 50 # 即使Fail也保留观察，因为可能盘中拉起
+            decision = f"{Fore.YELLOW}等待翻红{Style.RESET_ALL}"
+            # Keep fail_msg empty to show it but with low score? 
+            # Logic below returns if fail_msg exists. 
+            # Let's clear fail_msg for pool stocks so they are shown as 'Wait'
+            fail_msg = "" 
+            
+    # C. 常规弱转强
     elif open_pct < WTS_OPEN_MAX:
         # 平盘/小红盘区
         if ratio_mv > WTS_MV_RATIO:
             is_weak_to_strong = True
+            decision = f"{Fore.MAGENTA}★ 弱转强{Style.RESET_ALL}"
         else:
-            fail_msg = f"竞价弱({open_pct}%)"
+            if not pool_tag: fail_msg = f"竞价弱({open_pct}%)"
+            
+    # D. 高开风险 (F佬: 拒绝追高)
     else:
-        # 高开区 (非弱转强，属于强更强)
-        # 如果是池内票，高开也值得看
-        pass
+        # High Open (>5%) but not ZT -> Risk
+        if open_pct > 5.0 and open_pct < 9.8:
+            if "加速" in pool_tag:
+                pass # 加速预期可以高开
+            else:
+                decision = f"{Fore.YELLOW}⚠️ 高开风险{Style.RESET_ALL}"
+                score = 60 # 降分
+        else:
+            # Normal High Open (2-5%)
+            pass
 
-    # --- 规则2: 竞价/昨成交 ---
+    # --- 规则2: 竞价/昨成交 (量能承接) ---
     if ratio_yest < 3.0:
         if not is_weak_to_strong and code not in pool_map:
             fail_msg = f"承接弱({ratio_yest:.1f}%)"
-    elif ratio_yest > 25.0: # 稍微放宽防止过热误杀
-        if not is_weak_to_strong:
-            pass # 过热
-
+            
     # --- 规则3: 市值分层 (池内票可忽略) ---
     if code not in pool_map:
         mv_yi = circ_mv / 100000000.0
@@ -259,12 +330,11 @@ def analyze_stock(row, history_info, pool_map, phase):
 
     # --- 结论 ---
     in_pool_mark = ""
-    tag_info = "" # 存储具体标签
+    tag_info = pool_tag # 获取具体标签
     
     if code in pool_map:
-        score += 20
+        if score < 80: score += 10 # 基础加分
         in_pool_mark = f"{Back.MAGENTA}{Fore.WHITE} 池 {Style.RESET_ALL}"
-        tag_info = pool_map[code] # 获取具体标签 (如 '🔥焚诀')
         
         # 池内票，即使 fail_msg 也可以保留显示，但分低
         if fail_msg: 
@@ -279,19 +349,12 @@ def analyze_stock(row, history_info, pool_map, phase):
             'yest_pct': yest_pct, 'boards': boards, 'circ_mv': circ_mv, 'tag': tag_info
         }
 
-    # 成功入选
+    # 最终分值调整
     if is_weak_to_strong:
-        decision = f"{Fore.MAGENTA}★ 弱转强{Style.RESET_ALL}"
-        score = 85 + (10 if code in pool_map else 0)
+        if score < 85: score = 85
     else:
-        decision = f"{Fore.RED}★ 达标关注{Style.RESET_ALL}"
-        score = 80 + (10 if code in pool_map else 0)
+        if score < 80: score = 80
 
-    # 完美模型
-    if open_pct > 2.0 and 5.0 <= ratio_yest <= 15.0:
-        decision = f"{Back.RED}{Fore.WHITE} 🔥 完美 {Style.RESET_ALL}"
-        score = 95 + (10 if code in pool_map else 0)
-        
     decision += in_pool_mark
 
     return {
