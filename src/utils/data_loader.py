@@ -151,6 +151,58 @@ def load_pool():
         
     return pool
 
+def load_pool_full():
+    """
+    加策略池完整数据，返回 {code: dict_row}
+    包含: tag, limit_up_type, deviation_val, call_auction_ratio 等
+    """
+    pool = {}
+    
+    # 1. Load CSV
+    if os.path.exists(STRATEGY_POOL_PATH):
+        try:
+            # KeepDefaultNA=False to avoid 'NaN' string issues, but pandas might still do it.
+            # Convert to str where necessary
+            df = pd.read_csv(STRATEGY_POOL_PATH, dtype=str).fillna('')
+            for _, row in df.iterrows():
+                code = str(row.get('sina_code', ''))[2:]
+                if not code: code = str(row.get('code', '')).zfill(6)
+                
+                # Convert numeric fields back to float for calculation if needed, 
+                # or keep as simple props.
+                # Here we store the raw row dict (with strings) or converted.
+                # Let's clean it up slightly
+                item = row.to_dict()
+                item['code'] = code # ensure pure code
+                
+                # Tag aggregation from CSV
+                pool[code] = item
+        except Exception as e:
+            print(f"策略池加载失败: {e}")
+            pass
+            
+    # 2. Logic for Manual Focus integration into 'Full' pool?
+    # Manual focus currently only has 'Tag'. 
+    # If a stock is ONLY in manual focus but not in CSV, we create a dummy entry.
+    # If it is in Both, we might want to ensure the 'tag' reflects manual focus too?
+    # But usually pool_generator already merges manual focus into the CSV 'tag' column.
+    # So we just check for manual-only items.
+    
+    try:
+        manual_map = load_manual_focus()
+        for code, tag in manual_map.items():
+            if code not in pool:
+                pool[code] = {
+                    'code': code, 
+                    'name': '手动关注', 
+                    'tag': tag,
+                    'sina_code': f"sz{code}" if code.startswith('0') or code.startswith('3') else f"sh{code}" # simple guess
+                }
+    except:
+        pass
+        
+    return pool
+
 def load_history_basics():
     """加载昨收价，用于计算涨跌停价"""
     path = get_latest_history_path()

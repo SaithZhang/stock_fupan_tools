@@ -91,7 +91,40 @@ def load_ths_data():
             
     if not target_file: return {}
 
+    if not target_file: return {}
+
     print(f"{Fore.BLUE}📂 [优先] 加载同花顺数据: {os.path.basename(target_file)}")
+    return _parse_ths_csv(target_file)
+
+
+def load_yesterday_ths_data():
+    """
+    加载最近一个交易日(不含今日)的数据，用于计算昨日涨停溢价、昨日量比等
+    """
+    # 1. 先找到今天的日期 (从最新的文件名里提取)
+    if not os.path.exists(THS_DIR): return {}
+    files = os.listdir(THS_DIR)
+    latest_date = 0
+    for f in files:
+        if f.startswith("Table") and f.endswith(".txt"):
+             date_match = re.search(r'[-_]?(20\d{6})', f)
+             if date_match:
+                 d = int(date_match.group(1))
+                 if d > latest_date: latest_date = d
+    
+    if latest_date == 0: return {}
+    
+    # 2. 找上一个文件
+    prev_file_path = find_previous_ths_file(latest_date)
+    if not prev_file_path:
+        print(f"{Fore.YELLOW}⚠️ 未找到昨日THS数据文件")
+        return {}
+        
+    print(f"{Fore.BLUE}🔙 加载昨日同花顺数据: {os.path.basename(prev_file_path)}")
+    return _parse_ths_csv(prev_file_path)
+
+
+def _parse_ths_csv(target_file):
     try:
         # --- 关键修改：使用正则分隔符处理不规则的 tab ---
         # sep=r'\t+' 表示把连续的 tab 当作一个分隔符
@@ -113,9 +146,8 @@ def load_ths_data():
         col_code = next((c for c in df.columns if '代码' in c), None)
         col_name = next((c for c in df.columns if '名称' in c), None)
         col_price = next((c for c in df.columns if '现价' in c), None)
-        col_pct = next((c for c in df.columns if '涨幅' in c and '竞价' not in c and '10' not in c and '3' not in c),
-                       None)
-        col_amt = next((c for c in df.columns if '成交额' in c), None)
+        col_pct = next((c for c in df.columns if '涨幅' in c and '竞价' not in c and '10' not in c and '3' not in c), None)
+        col_amt = next((c for c in df.columns if '成交额' in c and '3日' not in c and '5日' not in c), None)
         col_to = next((c for c in df.columns if '换手' in c), None)
 
         col_zt_days = next((c for c in df.columns if '连续涨停' in c or '连板' in c), None)
@@ -123,6 +155,12 @@ def load_ths_data():
         col_desc = next((c for c in df.columns if '几天几板' in c), None)
         col_pct10 = next((c for c in df.columns if '10日涨幅' in c), None)
         col_auc_pct = next((c for c in df.columns if '竞价涨幅' in c), None)
+        
+        # --- New Columns ---
+        col_auc_amt = next((c for c in df.columns if '早盘竞价金额' in c), None)
+        col_open_num = next((c for c in df.columns if '开板次数' in c), None)
+        col_industry = next((c for c in df.columns if '所属行业' in c), None)
+        col_pct20 = next((c for c in df.columns if '20日涨幅' in c), None)
 
         if not col_code:
             print(f"{Fore.RED}❌ 解析失败：未找到【代码】列，可能是文件格式太乱。")
@@ -138,12 +176,9 @@ def load_ths_data():
             pct = safe_float(row.get(col_pct))
 
             # --- 校验：防止错位 (如把价格当成涨幅) ---
-            # 如果涨幅 > 60 (A股不太可能，除非新股首日)，或者名字里有%，说明读错了
             if abs(pct) > 60 and 'N' not in name and 'C' not in name:
-                # 可能是错位了，尝试修正或置0
                 pct = 0.0
             if '%' in name or len(name) > 10:
-                # 名字列读到了垃圾数据
                 continue
 
             item = {
@@ -156,6 +191,12 @@ def load_ths_data():
                 'turnover': safe_float(row.get(col_to)),
                 'pct_10': safe_float(row.get(col_pct10)),
                 'open_pct': safe_float(row.get(col_auc_pct)),
+                
+                # New Fields
+                'call_auction_amount': safe_float(row.get(col_auc_amt)),
+                'open_num': int(safe_float(row.get(col_open_num))) if col_open_num else 0,
+                'industry': safe_str(row.get(col_industry)),
+                'pct_20': safe_float(row.get(col_pct20)),
             }
 
             item['limit_days'] = int(safe_float(row.get(col_zt_days, 0)))
@@ -163,7 +204,7 @@ def load_ths_data():
 
             tags = []
             desc = safe_str(row.get(col_desc))
-            if desc and len(desc) < 20: tags.append(desc)  # 防止把长文本读进来
+            if desc and len(desc) < 20: tags.append(desc) 
 
             if item['limit_days'] > 0: tags.append(f"{item['limit_days']}板")
 
@@ -178,6 +219,32 @@ def load_ths_data():
     except Exception as e:
         print(f"{Fore.RED}❌ 读取失败: {e}")
         return {}
+
+
+def find_previous_ths_file(current_date_int):
+    """
+    寻找比 current_date_int 小的最近一个日期的文件
+    """
+    if not os.path.exists(THS_DIR): return None
+    
+    files = os.listdir(THS_DIR)
+    candidates = []
+    
+    for f in files:
+        if f.startswith("Table") and f.endswith(".txt"):
+            full_path = os.path.join(THS_DIR, f)
+            date_match = re.search(r'[-_]?(20\d{6})', f)
+            if date_match:
+                d_int = int(date_match.group(1))
+                if d_int < current_date_int:
+                    candidates.append({'path': full_path, 'date': d_int})
+    
+    if not candidates: return None
+    
+    # Sort descending to get the closest past date
+    candidates.sort(key=lambda x: x['date'], reverse=True)
+    return candidates[0]['path']
+
 
 
 # ================= 2. 加载通信达 (保持稳定) =================

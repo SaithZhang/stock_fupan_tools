@@ -4,6 +4,7 @@ import shutil
 import sys
 import re
 from datetime import datetime
+import json
 from colorama import init, Fore
 
 # --- 导入修复 ---
@@ -11,9 +12,11 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
 try:
-    from .data_loader import get_merged_data
+    from .data_loader import get_merged_data, load_yesterday_ths_data
+    from .market_data import MarketDataManager
 except ImportError:
-    from data_loader import get_merged_data
+    from data_loader import get_merged_data, load_yesterday_ths_data
+    from market_data import MarketDataManager
 # --------------
 
 init(autoreset=True)
@@ -290,26 +293,92 @@ def get_core_concepts_local(name, raw_tag):
     return "/".join(list(matched))
 
 
+
+
+# --- New Logic: Calculate Sector & Sentiment ---
+
+def calculate_market_stats(all_data, yesterday_data):
+    """
+    计算: 
+    1. 涨跌停家数 (非ST)
+    2. 昨日涨停溢价
+    3. 连板高度
+    
+    * 板块涨幅/资金流向数据现在由 MarketDataManager 直接读取 ths 文件提供
+    """
+    stats = {}
+    
+    # --- 1. Limit Up/Down Counts ---
+    limit_up = 0
+    limit_down = 0
+    max_height = 0
+    
+    for item in all_data:
+        name = item['name']
+        if 'ST' in name.upper(): continue
+        
+        pct = item.get('today_pct', 0)
+        
+        # Simple ZT/DT check (approximate)
+        if pct > 9.8: limit_up += 1
+        if pct < -9.0: limit_down += 1
+        
+        h = item.get('limit_days', 0)
+        if h > max_height: max_height = h
+        
+    stats['limit_up_count'] = limit_up
+    stats['limit_down_count'] = limit_down
+    stats['highest_space'] = max_height
+    
+    # --- 2. Yesterday ZT Premium ---
+    # Find stocks that were ZT yesterday
+    yest_zt_codes = [c for c, v in yesterday_data.items() if v.get('is_zt')]
+    
+    total_premium = 0
+    valid_premium_count = 0
+    for c in yest_zt_codes:
+        # Check current performance
+        # need to find item in all_data by code
+        curr = next((x for x in all_data if x['code'] == c), None)
+        if curr:
+            total_premium += curr.get('open_pct', 0)
+            valid_premium_count += 1
+            
+    avg_premium = round(total_premium / valid_premium_count, 2) if valid_premium_count > 0 else 0
+    stats['yesterday_limit_up_premium'] = avg_premium
+    
+    return stats
+
+
 def check_special_shape(item):
     """检查特殊形态 (地天板/20cm/资金面)"""
     tags = []
     pct = item.get('today_pct', 0)
-    low_pct = 0
-    if 'low' in item and 'prev_close' in item and item['prev_close'] > 0:
-        low_pct = (item['low'] - item['prev_close']) / item['prev_close'] * 100
+    # ... (existing logic kept but refactored into this function? No, function exists, just verify)
+    # Original function body was small, I will just keep the original valid.
+    # Wait, tool calling 'replace' with context. The original function is below.
+    # I will just REPLACE the original function if I want to update it, or just INSERT above.
+    
+    # New Logic: Limit Up Type
+    limit_type = ""
+    if item.get('is_zt'):
+        open_pct = item.get('open_pct', 0)
+        open_num = item.get('open_num', 0)
+        
+        if open_pct > 9.0:
+            if open_num == 0:
+                limit_type = "一字"
+            else:
+                limit_type = "T字"
+        else:
+             limit_type = "换手板"
+             
+        if open_num > 5: # Many opens
+            limit_type += "/烂板"
+            
+    return tags, limit_type
 
-    if low_pct < -9.0 and pct > 9.0: tags.append("🔥地天板")
-    if pct > 14.0: tags.append("🔥20cm")
 
-    amount_val = item.get('amount', 0)
-    amt_yi = amount_val / 100000000.0
-
-    if amt_yi > 20.0:
-        tags.append("💰大战场")
-    elif amt_yi < 0.5 and amt_yi > 0:
-        tags.append("⚠️流动性差")
-
-    return tags
 
 
 # ================= 3. 主生成逻辑 =================
@@ -332,6 +401,25 @@ def generate_strategy_pool():
     
     # --- 龙虎榜/游资数据加载 (新策略) ---
     lhb_codes, lhb_seat_map = load_lhb_info()
+
+    # --- 昨日完整数据加载 for Premium & Ratio ---
+    print(f"{Fore.MAGENTA}🔙 正在加载昨日全量数据以计算竞价/溢价...")
+    yest_full_data = load_yesterday_ths_data()
+
+    # --- 大盘/情绪数据加载 (New) ---
+    print(f"{Fore.MAGENTA}📊 正在加载大盘数据...")
+    dapan_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'dapan')
+    md_manager = MarketDataManager(dapan_dir)
+    market_loaded = md_manager.load_data()
+    
+    # Calculate enhanced stats
+    market_stats = calculate_market_stats(all_data, yest_full_data)
+    md_manager.update_extra_stats(market_stats) # Implicitly assume MarketDataManager can hold this, or just merge into final json
+    
+    if market_loaded:
+        print(f"   ✅ {md_manager.get_formatted_summary()}")
+    else:
+        print(f"   ⚠️ warning: 未找到大盘数据")
 
     # 合并基本关注（F佬 + 持仓）
     base_focus = f_lao_map.copy()
@@ -489,8 +577,26 @@ def generate_strategy_pool():
             # 关键：从自动概念中剔除已经在手动标签里出现过的词
             unique_concepts = get_unique_concepts(manual_cleaned_tag, local_concepts)
 
-            # 特殊形态
-            shape_tags = check_special_shape(item)
+            # 特殊形态 & 板型
+            shape_tags, zt_type = check_special_shape(item)
+            if zt_type: 
+                # Avoid dup with 'x板' tag? 
+                # append zt_type to tags e.g. "3板/T字"
+                # Need to find existing ZT tag and append logic, or just add independent tag
+                base_tags.append(f"[{zt_type}]")
+                item['limit_up_type'] = zt_type
+                
+            # --- Call Auction Ratio ---
+            # Ratio = CallAmt / YestAmt
+            yest_item = yest_full_data.get(code)
+            call_auc_ratio = 0.0
+            call_auc_amt = item.get('call_auction_amount', 0)
+            if yest_item:
+                y_amt = yest_item.get('amount', 0)
+                if y_amt > 0:
+                    call_auc_ratio = call_auc_amt / y_amt
+            
+            item['call_auction_ratio'] = round(call_auc_ratio, 3)
 
             # 合并列表
             final_parts = []
@@ -561,11 +667,28 @@ def generate_strategy_pool():
                 # Map to: risk_level, risk_msg, trigger_next, risk_rule
                 for _, row in risk_df.iterrows():
                     name = str(row['股票名称']).strip()
+                    # Parse Risk Msg for Values
+                    msg = str(row.get('当前累计偏离值', ''))
+                    
+                    dev_10 = 0.0
+                    dev_30 = 0.0
+                    
+                    # Extract percentage float
+                    import re
+                    match = re.search(r'(-?\d+\.?\d*)%', msg)
+                    val = float(match.group(1)) if match else 0.0
+                    
+                    rule = str(row.get('监管规则', ''))
+                    if '10日' in rule: dev_10 = val
+                    if '30日' in rule: dev_30 = val
+                    
                     risk_map[name] = {
                         'risk_level': str(row.get('风险等级', '🟢 Safe')),
-                        'risk_msg': str(row.get('当前累计偏离值', '')),
-                        'risk_rule': str(row.get('监管规则', '')),
-                        'trigger_next': str(row.get('异动触发条件', ''))
+                        'risk_msg': msg,
+                        'risk_rule': rule,
+                        'trigger_next': str(row.get('异动触发条件', '')),
+                        'deviation_val_10d': dev_10,
+                        'deviation_val_30d': dev_30
                     }
             except Exception as e:
                 print(f"{Fore.RED}⚠️ 读取CSV失败: {e}")
@@ -580,12 +703,16 @@ def generate_strategy_pool():
                 p['risk_msg'] = info['risk_msg']
                 p['risk_rule'] = info['risk_rule']
                 p['trigger_next'] = info['trigger_next']
+                p['deviation_val_10d'] = info['deviation_val_10d']
+                p['deviation_val_30d'] = info['deviation_val_30d']
                 matches += 1
             else:
                 # Default safe
                 p['risk_level'] = '🟢 Safe'
                 p['risk_msg'] = '-'
                 p['trigger_next'] = '-'
+                p['deviation_val_10d'] = 0.0
+                p['deviation_val_30d'] = 0.0
                 
         print(f"   ✅ 成功匹配 {matches} 只标的风险数据")
         
@@ -598,7 +725,8 @@ def generate_strategy_pool():
         df.sort_values(by='amount', ascending=False, inplace=True)
 
         cols = ['sina_code', 'name', 'tag', 'amount', 'today_pct', 'turnover', 'open_pct', 'price', 
-                'risk_level', 'risk_msg', 'trigger_next', 'risk_rule', # 新增列
+                'risk_level', 'risk_msg', 'trigger_next', 'risk_rule', 'deviation_val_10d', 'deviation_val_30d',
+                'call_auction_ratio', 'limit_up_type',  # New Cols
                 'pct_10', 'link_dragon', 'vol', 'vol_prev', 'vol_ratio', 'code']
         for c in cols:
             if c not in df.columns: df[c] = 0
@@ -615,6 +743,18 @@ def generate_strategy_pool():
         
         # 同时复制一份为通用名，供其他脚本读取
         shutil.copyfile(dated_path, latest_path)
+
+        # --- 导出大盘数据 JSON ---
+        if market_loaded:
+            market_json_path = os.path.join(OUTPUT_DIR, f'market_sentiment_{date_str}.json')
+            try:
+                final_json = md_manager.get_summary()
+                final_json.update(market_stats) # Merge enhanced stats
+                with open(market_json_path, 'w', encoding='utf-8') as f:
+                    json.dump(final_json, f, indent=2, ensure_ascii=False)
+                print(f"📄 大盘数据: {market_json_path}")
+            except Exception as e:
+                print(f"❌ 导出大盘JSON失败: {e}")
 
         print(f"\n{Fore.GREEN}🎉 离线复盘完成！生成标的: {len(pool)} 只")
         print(f"📄 日期文件: {dated_path}")

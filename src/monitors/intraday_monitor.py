@@ -10,6 +10,7 @@ import sys
 import re
 import time
 import datetime
+import json
 from colorama import init, Fore, Style, Back
 
 # 解决 Windows 终端输出编码问题
@@ -27,7 +28,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
 # Append PROJECT_ROOT to sys.path to allow imports from src
 sys.path.append(PROJECT_ROOT)
 
-from src.utils.data_loader import load_holdings, load_pool, load_history_basics, load_manual_focus, HOLDINGS_PATH, STRATEGY_POOL_PATH, get_latest_history_path
+from src.utils.data_loader import load_holdings, load_pool_full, load_history_basics, load_manual_focus, HOLDINGS_PATH, STRATEGY_POOL_PATH, get_latest_history_path
 
 
 # 引入核心模块
@@ -37,7 +38,24 @@ try:
 except:
     pass
 
-# 数据加载函数已移至 src/utils/data_loader.py
+    pass
+
+# Helper to load market sentiment from JSON
+def load_market_sentiment_json():
+    """Load the latest market_sentiment_YYYYMMDD.json"""
+    output_dir = os.path.join(PROJECT_ROOT, 'data', 'output')
+    if not os.path.exists(output_dir): return {}
+    
+    files = [f for f in os.listdir(output_dir) if f.startswith('market_sentiment_') and f.endswith('.json')]
+    if not files: return {}
+    
+    files.sort(reverse=True)
+    latest = os.path.join(output_dir, files[0])
+    try:
+        with open(latest, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return {}
 
 
 # ================= 🚀 核心策略 =================
@@ -196,17 +214,20 @@ def check_signals(row, holding_info, tag, index_pct, current_time_str):
 def main():
     print(f"\n{Back.RED}{Fore.WHITE} F佬 · 作战指挥室 (实时监控) {Style.RESET_ALL}")
     
-    # 1. 加载名单
+    # 1. 加载名单 (Use Full Pool)
     holdings = load_holdings()
-    pool_map = load_pool()
+    pool_map_full = load_pool_full()
     manual_map = load_manual_focus() # 加载手动关注，用于强制显示
     history = load_history_basics() # 用来补全名称
     
+    # Load Sentiment JSON
+    sentiment_json = load_market_sentiment_json()
+    
     # 合并监控名单
-    monitor_codes = set(holdings) | set(pool_map.keys())
+    monitor_codes = set(holdings) | set(pool_map_full.keys())
     monitor_list = list(monitor_codes)
     
-    print(f"🎯 监控目标: {len(monitor_list)} 只 (持仓 {len(holdings)} | 策略 {len(pool_map)})")
+    print(f"🎯 监控目标: {len(monitor_list)} 只 (持仓 {len(holdings)} | 策略 {len(pool_map_full)})")
     
     # 获取行情
     df = ak.stock_zh_a_spot_em()
@@ -220,6 +241,21 @@ def main():
     total_amt_str = f"{total_amt/1000000000000:.2f}万亿" if total_amt > 1000000000000 else f"{total_amt/100000000:.0f}亿"
     sh_vr = idx_info['sh_vr']
     
+    sh_vr = idx_info['sh_vr']
+    
+    # Extract Sentiment from JSON
+    highest_space = sentiment_json.get('highest_space', 0)
+    limit_up_count = sentiment_json.get('limit_up_count', 0)
+    limit_down_count = sentiment_json.get('limit_down_count', 0)
+    prem = sentiment_json.get('yesterday_limit_up_premium', 0.0)
+    
+    # Extract Sector Inflows from JSON
+    inflows = sentiment_json.get('sector_inflows', [])
+    inflow_str = " ".join([f"{s['name']}" for s in inflows[:3]]) if inflows else ""
+    
+    # Extract Sector Gainers from JSON (Overwrite real-time scraping if prefer stable daily view, but real-time is better for monitor)
+    # used real-time 'sector_summary' below
+    
     sector_summary, sector_detail = get_market_mood()
     
     current_time = datetime.datetime.now().strftime('%H:%M:%S')
@@ -232,7 +268,17 @@ def main():
         code = row['代码']
         holding_info = holdings.get(code)
         is_hold = holding_info is not None
-        tag = pool_map.get(code, "持仓" if is_hold else "")
+        
+        # Get Strategy Info
+        strat_info = pool_map_full.get(code, {})
+        tag = strat_info.get('tag', "持仓" if is_hold else "")
+        limit_type = strat_info.get('limit_up_type', '')
+        call_ratio = float(strat_info.get('call_auction_ratio', 0))
+        
+        # Risk / Deviation
+        dev_30 = float(strat_info.get('deviation_val_30d', 0))
+        dev_10 = float(strat_info.get('deviation_val_10d', 0))
+        risk_level = strat_info.get('risk_level', '') # e.g. 高危
         
         name = row['名称']
         price = row['最新价']
@@ -258,7 +304,13 @@ def main():
                 'color': sig_color,
                 'is_hold': is_hold,
                 'vr': float(row.get('量比', 0)),
-                'to': float(row.get('换手率', 0))
+                'to': float(row.get('换手率', 0)),
+                # New Fields
+                'call_ratio': call_ratio,
+                'limit_type': limit_type,
+                'dev_30': dev_30,
+                'dev_10': dev_10,
+                'risk_level': risk_level
             })
             
     # 排序
@@ -266,13 +318,15 @@ def main():
     
     # 头部信息
     idx_color = Fore.RED if index_pct > 0 else Fore.GREEN
-    # 格式化头部信息：上证 + 量比 + 成交额
+    # 格式化头部信息：上证 + 量比 + 成交额 + 情绪
     header_info = f"上证: {idx_color}{index_price} ({index_pct}%) {Style.RESET_ALL} | 量比: {sh_vr} | 成交: {total_amt_str}"
-    print(f"\n{Back.BLUE}{Fore.WHITE} F佬 · 指挥室 {current_time} {Style.RESET_ALL} | {header_info}")
-    print(f"{Fore.YELLOW}🔥 领涨: {sector_summary}{Style.RESET_ALL}")
-    print("-" * 120)
-    print(f"{'代码':<8} {'名称':<8} {'涨幅%':<8} {'5分%':<7} {'现价':<8} {'乖离%':<7} {'成本/状态':<10} {'量比':<6} {'信号/属性'}")
-    print("-" * 120)
+    sentiment_info = f" | 高度: {highest_space}板 | 涨停: {limit_up_count} | 溢价: {prem}%"
+    
+    print(f"\n{Back.BLUE}{Fore.WHITE} F佬 · 指挥室 {current_time} {Style.RESET_ALL} | {header_info}{sentiment_info}")
+    print(f"{Fore.YELLOW}🔥 领涨: {sector_summary} | 💰 资金: {inflow_str}{Style.RESET_ALL}")
+    print("-" * 135)
+    print(f"{'代码':<8} {'名称':<8} {'涨幅%':<8} {'5分%':<7} {'现价':<8} {'乖离%':<7} {'成本/状态':<10} {'量比':<6} {'竞价':<5} {'信号/属性'}")
+    print("-" * 135)
     
     for item in display_list:
         c_pct = Fore.RED if item['pct'] > 0 else Fore.GREEN
@@ -299,6 +353,22 @@ def main():
         bias_val = item['bias']
         c_bias = Fore.MAGENTA if bias_val > 3 else (Fore.CYAN if bias_val < -3 else "")
         
+        # Prepare Risk / Deviation Signals
+        risk_str = ""
+        if item['dev_30'] > 0: risk_str += f"⚠️30日{item['dev_30']:.0f}% "
+        if item['dev_10'] > 0: risk_str += f"⚠️10日{item['dev_10']:.0f}% "
+        
+        # Prepare Limit Type (Show in name or separate?)
+        # Combine Limit Type with Tag for display
+        final_tag = item['tag']
+        if item['limit_type']:
+            final_tag = f"[{item['limit_type']}] " + final_tag
+            
+        # Highlight Call Ratio
+        c_ratio = item['call_ratio']
+        ratio_str = f"{c_ratio:.1f}"
+        if c_ratio > 0.1: ratio_str = f"{Fore.RED}{ratio_str}{Style.RESET_ALL}"
+        
         print(
             f"{code_str:<16} " 
             f"{item['name'][:4]:<8} "
@@ -308,7 +378,8 @@ def main():
             f"{c_bias}{bias_val:<7.2f}{Style.RESET_ALL} "
             f"{cost_str:<10} "
             f"{item.get('vr', 0):<6.1f} "
-            f"{item['color']}{item['signal']} {Style.RESET_ALL}{item['tag'][:5]}"
+            f"{ratio_str:<14} " # Includes color codes which take length, pad strictly 
+            f"{item['color']}{item['signal']} {Style.RESET_ALL}{risk_str}{final_tag[:20]}"
         )
         
     print("-" * 110)
