@@ -4,16 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="7f3e5001-998e-49af-adfe-f0b60b419f26" name="Changes" comment="拆分重构">
-      <change afterPath="$PROJECT_DIR$/data/input/note/flao_fupan.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/data/input/risk/risk_20260108.csv" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/data/input/ths/Table-20260108.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/input/f_lao_list.txt" beforeDir="false" afterPath="$PROJECT_DIR$/data/input/f_lao_list.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/input/holdings.txt" beforeDir="false" afterPath="$PROJECT_DIR$/data/input/holdings.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/input/ths_clipboard.txt" beforeDir="false" afterPath="$PROJECT_DIR$/data/input/ths_clipboard.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/pool_generator.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pool_generator.py" afterDir="false" />
-    </list>
+    <list default="true" id="7f3e5001-998e-49af-adfe-f0b60b419f26" name="Changes" comment="拆分重构" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -380,6 +371,7 @@
       <workItem from="1767830679970" duration="20246000" />
       <workItem from="1767915555630" duration="2358000" />
       <workItem from="1767919900493" duration="10631000" />
+      <workItem from="1768050694314" duration="429000" />
     </task>
     <task id="LOCAL-00001" summary="init">
       <option name="closed" value="true" />
@@ -573,7 +565,15 @@
       <option name="project" value="LOCAL" />
       <updated>1767711678021</updated>
     </task>
-    <option name="localTasksCounter" value="25" />
+    <task id="LOCAL-00025" summary="拆分重构">
+      <option name="closed" value="true" />
+      <created>1768050718181</created>
+      <option name="number" value="00025" />
+      <option name="presentableId" value="LOCAL-00025" />
+      <option name="project" value="LOCAL" />
+      <updated>1768050718181</updated>
+    </task>
+    <option name="localTasksCounter" value="26" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">

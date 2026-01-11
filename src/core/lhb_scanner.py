@@ -19,6 +19,7 @@ ARCHIVE_DIR = os.path.join(OUTPUT_DIR, 'archive')
 # 知名游资/席位映射配置
 # 格式: '游资标签': ['关键词1', '关键词2']
 FAMOUS_SEATS = {
+    #Top Yu
     '陈小群': [
         '大连金马路', '中国银河证券股份有限公司大连金马路',
         '大连黄河路', '中国银河证券股份有限公司大连黄河路',
@@ -40,17 +41,50 @@ FAMOUS_SEATS = {
     ],
     '六一中路': [
         '福州六一中路', '招商证券股份有限公司福州六一中路',
-        '天津东丽开发区', '华泰证券股份有限公司天津东丽开发区二纬路'
+        '天津东丽开发区', '华泰证券股份有限公司天津东丽开发区二纬路', # Also 交易猿
+        '深圳深南大道', '深圳分公司' # Sometimes
     ],
     '章盟主': [
-        '上海江苏路', '国泰君安证券股份有限公司上海江苏路', # 原"六路"
-        '宁波江东北路'
+        '上海江苏路', '国泰君安证券股份有限公司上海江苏路',
+        '宁波江东北路' # 
     ],
-    '养家': ['宛平南路', '华鑫证券有限责任公司上海宛平南路'],
-    '上塘路': ['上塘路', '财通证券股份有限公司杭州上塘路'],
-    '作手新一': ['南京太平南路', '国泰君安证券股份有限公司南京太平南路'],
-    '小鳄鱼': ['南京大钟亭', '南京证券股份有限公司南京大钟亭'],
+    '知春路': ['知春路', '北京知春路'], # Sell 3 in Goldwind
+    '养家': [
+        '宛平南路', '华鑫证券有限责任公司上海宛平南路',
+        '上海茅台路', '华鑫证券有限责任公司上海茅台路',
+        '上海松江', '华鑫证券有限责任公司上海松江',
+        '上海陆家嘴', '华鑫证券有限责任公司上海陆家嘴',
+        '西安二环', '华鑫证券有限责任公司西安二环' # Sometimes used
+    ],
+    '上塘路': ['上塘路', '财通证券股份有限公司杭州上塘路', '体育馆路', '财通证券股份有限公司杭州体育馆路'],
+    '作手新一': [
+        '南京太平南路', '国泰君安证券股份有限公司南京太平南路', 
+        '南京金融城', 
+        '重庆解放碑', '国泰海通证券股份有限公司重庆解放碑', '国泰君安证券股份有限公司重庆解放碑' # User noted, usually Zuoshou
+    ],
+    '小鳄鱼': ['南京大钟亭', '南京证券股份有限公司南京大钟亭', '上海东方路', '广发证券股份有限公司上海东方路'],
     '毛老板': ['北京北三环东路', '成都南一环路'],
+    
+    # New Additions
+    '92科比': ['泰州鼓楼南路', '国泰君安证券股份有限公司泰州鼓楼南路', '南京天元东路', '兴业证券股份有限公司南京天元东路'],
+    '消闲派': ['宜昌珍珠路', '国泰君安证券股份有限公司宜昌珍珠路', '宜昌沿江大道', '国泰海通证券公宜昌沿江大道营业部'], # Added Yanjiang
+    '余哥': ['相城大道', '光大证券股份有限公司苏州相城大道', '东吴证券股份有限公司苏州相城大道', '宁波沙滩路', '余姚舜水南路', '宁波海晏北路', '平安证券股份有限公司宁波海晏北路'], # Added Soochow Xiangcheng
+    '赵老哥': ['绍兴', '中国银河证券股份有限公司绍兴', '绍兴解放北路'],
+    '中山东路': ['中山东路', '上海松江区中山东路', '国泰海通证券上海松江区中山东路营业部'], # New from news
+    '宁波桑田路': ['宁波桑田路', '国盛证券有限责任公司宁波桑田路'],
+    '佛山系': ['佛山绿景路', '光大证券股份有限公司佛山绿景路', '佛山季华六路'],
+    '和平路': ['鞍山和平路', '中信证券股份有限公司鞍山和平路'], # Big buyer usually
+    '交易猿': ['天津东丽开发区', '华泰证券股份有限公司天津东丽开发区二纬路'], # Often same as 61
+    '思明南路': ['东莞证券股份有限公司湖北分公司', '东亚前海证券有限责任公司上海分公司'],
+    
+    # Groups
+    '拉萨天团': [
+        '拉萨团结路', '东方财富证券股份有限公司拉萨团结路',
+        '拉萨东环路', '东方财富证券股份有限公司拉萨东环路',
+        '拉萨金融城', '东方财富证券股份有限公司拉萨金融城'
+    ],
+    '北向': ['深股通', '沪股通', '香港中央结算有限公司'],
+    '机构': ['机构专用']
 }
 
 # 确保目录存在
@@ -88,7 +122,22 @@ def fetch_famous_seats(date_str=None):
             try:
                 # 获取个股详情
                 # stock_lhb_stock_detail_em: 东方财富-个股龙虎榜详情
-                df_detail = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str)
+                # Fix: Must fetch both '买入' and '卖出' lists to get complete data
+                try:
+                    df_buy = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str, flag="买入")
+                    df_sell = ak.stock_lhb_stock_detail_em(symbol=code, date=date_str, flag="卖出")
+                    
+                    df_detail = pd.concat([df_buy, df_sell], ignore_index=True)
+                    # Deduplicate based on Branch and Type (as one branch might appear in multiple list types, e.g., 3-day and 1-day)
+                    # But merging duplicates with same values is fine. 
+                    # Warning: valid to have same branch in 1-day AND 3-day list (different '类型'). 
+                    # If same branch/type appears in buy and sell list, it is identical.
+                    df_detail = df_detail.drop_duplicates(subset=['交易营业部名称', '类型'])
+                    
+                except Exception as e:
+                    # print(f"Error fetching detail for {code}: {e}")
+                    continue
+
                 if df_detail.empty: continue
                 
                 # Check columns to ensure we access correctly
@@ -102,6 +151,7 @@ def fetch_famous_seats(date_str=None):
                 for _, row in df_detail.iterrows():
                     # Column name might be '营业部名称' or '交易营业部名称'
                     branch = str(row.get('营业部名称') or row.get('交易营业部名称', ''))
+                    branch = branch.strip()
                     
                     # Amt might be string with commas
                     try:
@@ -118,6 +168,14 @@ def fetch_famous_seats(date_str=None):
                             if kw in branch:
                                 # 命中
                                 action_type = "观望"
+                                
+                                # 解析榜单类型 (日榜 vs 3日榜)
+                                lhb_type = row.get('类型', '')
+                                time_tag = "日" # Default
+                                if "三" in lhb_type or "3" in lhb_type:
+                                    time_tag = "3日"
+                                elif "严重" in lhb_type: # 严重异常波动 usually covers longer period (e.g. 10 days) or specific check
+                                    time_tag = "严重异动"
                                 
                                 # 阈值调整: 避免微量买入被误判为做T
                                 # 1. 显著性判断
@@ -146,42 +204,190 @@ def fetch_famous_seats(date_str=None):
                                     '股票名称': stock_name,
                                     '操作': action_type,
                                     '买入金额': buy_amt,
-                                    '卖出金额': sell_amt
+                                    '卖出金额': sell_amt,
+                                    '榜单标签': time_tag
                                 })
                                 break # Match one label only
             except Exception as e:
                 # print(f"Error scanning {code}: {e}")
                 continue
                 
+        # --- Locking Position Detection (Suocang) ---
+        # Logic: If (Seat, Stock) in Yesterday's Famous Buy List AND Stock in Today's LHB AND Seat NOT in Today's Sell List -> Locked
+        
+        try:
+            # 1. Find previous famous file
+            # Simple lookback for now
+            import datetime as dt
+            curr_date = datetime.strptime(date_str, "%Y%m%d")
+            prev_file = None
+            for i in range(1, 5): # Check back 4 days for previous trading day
+                prev_d_str = (curr_date - dt.timedelta(days=i)).strftime("%Y%m%d")
+                p_path = os.path.join(LHB_DIR, f"lhb_famous_{prev_d_str}.csv")
+                if os.path.exists(p_path):
+                    prev_file = p_path
+                    print(f"   🔍 对比昨日数据: {prev_d_str}")
+                    break
+            
+            if prev_file:
+                df_prev = pd.read_csv(prev_file)
+                # Prepare today's sell set: {(Label, Stock)}
+                today_sell_set = set()
+                for h in hits:
+                    if "卖" in h['操作'] or "做T" in h['操作']:
+                        today_sell_set.add((h['游资标签'], h['股票名称']))
+                
+                # Check previous buys
+                for _, row in df_prev.iterrows():
+                    p_label = row['游资标签']
+                    p_buys = str(row['买入股票'])
+                    if pd.isna(p_buys) or not p_buys.strip(): continue
+                    
+                    # Buy string might be "StockA StockB(1.2亿)"
+                    import re
+                    # Extract stock names from "StockA(1亿) StockB"
+                    # Simple split by space
+                    p_stocks_raw = p_buys.split(' ')
+                    for s_raw in p_stocks_raw:
+                        if not s_raw: continue
+                        # Remove amount info like (1.2亿)
+                        s_name = re.sub(r'\(.*?\)', '', s_raw)
+                        s_name = s_name.strip()
+                        
+                        # Check if this stock is in TODAY'S LHB List (df_lhb)
+                        if s_name in df_lhb['名称'].values:
+                            # Start check
+                            has_sold = (p_label, s_name) in today_sell_set
+                            has_bought_today = False
+                            for h in hits:
+                                if h['游资标签'] == p_label and h['股票名称'] == s_name and ("买" in h['操作'] or "做T" in h['操作']):
+                                    has_bought_today = True
+                                    
+                            if not has_sold:
+                                status = "🔒 锁仓"
+                                if has_bought_today:
+                                    status = "➕ 加仓" # Bought and didn't sell
+                                
+                                already_recorded = False
+                                for h in hits:
+                                    if h['游资标签'] == p_label and h['股票名称'] == s_name:
+                                        # Update existing hit special status if needed, but easier to just skip adding duplicative "Lock" entry
+                                        # Only add if completely missing from today's active list
+                                        already_recorded = True 
+                                        break
+                                        
+                                if not already_recorded:
+                                    hits.append({
+                                        '游资标签': p_label,
+                                        '营业部名称': f"{p_label}席位(推测)",
+                                        '股票代码': "", 
+                                        '股票名称': s_name,
+                                        '操作': status,
+                                        '买入金额': 0,
+                                        '卖出金额': 0,
+                                        '榜单标签': "日" # Lock means checking against today's status, usually implies keeping daily position
+                                    })
+        except Exception as e:
+            print(f"Error checking locks: {e}")
+
         # 整理输出
         if hits:
-            # 聚合为之前的格式: 游资标签, 营业部名称, 买入股票(list), 卖出股票(list)
-            # 但为了准确，我们这里可以稍微变通一下，或者还原为之前的格式以便 pool_generator 读取
+            # Aggregation v2:
+            # 1. Group by (Label, Branch, Stock, Tag) -> Take MAX amounts (Dedup 1-day/3-day for same branch IF SAME TAG)
+            # 2. Group by (Label, Stock, Tag) -> SUM amounts (Combine multiple branches for same investor)
             
-            # Map: { (label, branch) : {'buy': [], 'sell': []} }
-            agg_map = {}
+            # Step 1: Branch Level Max (Per Tag)
+            # If a branch appears in Daily list, we take its max for Daily.
+            # If it appears in 3-Day list, we take its max for 3-Day.
+            branch_map = {} # (Label, Branch, Stock, Tag) -> {'buy': max_b, 'sell': max_s, 'status': s}
+            
             for h in hits:
-                key = (h['游资标签'], h['营业部名称'])
-                if key not in agg_map: agg_map[key] = {'buy': [], 'sell': []}
+                lbs_key = (h['游资标签'], h['营业部名称'], h['股票名称'].strip(), h['榜单标签'])
+                if lbs_key not in branch_map:
+                    branch_map[lbs_key] = {'buy': 0, 'sell': 0, 'special_status': None}
                 
-                s_name = h['股票名称']
-                act = h['操作']
+                curr = branch_map[lbs_key]
+                curr['buy'] = max(curr['buy'], h['买入金额'])
+                curr['sell'] = max(curr['sell'], h['卖出金额'])
+                if "锁仓" in h['操作'] or "加仓" in h['操作']:
+                    curr['special_status'] = h['操作']
+
+            # Step 2: Investor Level Sum (Per Tag)
+            final_map = {} # (Label) -> { (Stock, Tag): {'buy': sum_b, 'sell': sum_s, 'status': ...} }
+            
+            for (label, branch, stock, tag), vals in branch_map.items():
+                if label not in final_map: final_map[label] = {}
+                st_key = (stock, tag)
+                if st_key not in final_map[label]: final_map[label][st_key] = {'buy': 0, 'sell': 0, 'statuses': set()}
                 
-                if "买" in act or "做T" in act:
-                    agg_map[key]['buy'].append(f"{s_name}({h['买入金额']/10000:.1f}亿)" if h['买入金额']>100000000 else s_name)
-                if "卖" in act or "做T" in act:
-                    agg_map[key]['sell'].append(s_name)
-                    
+                f_curr = final_map[label][st_key]
+                f_curr['buy'] += vals['buy']
+                f_curr['sell'] += vals['sell']
+                if vals['special_status']:
+                    f_curr['statuses'].add(vals['special_status'])
+            
+            # Step 3: Format Rows
             final_rows = []
-            for (label, branch), val in agg_map.items():
+            for label, item_dict in final_map.items():
+                buy_strs = []
+                sell_strs = []
+                
+                # Sort items: First by Stock Name, then by Tag (Daily before 3-Day)
+                # item_dict keys are (Stock, Tag)
+                sorted_keys = sorted(item_dict.keys(), key=lambda x: (x[0], x[1] != '日')) # '日' comes first
+                
+                for s_name, tag in sorted_keys:
+                    vals = item_dict[(s_name, tag)]
+                    b_amt = vals['buy']
+                    s_amt = vals['sell']
+                    
+                    s_display = s_name
+                    # Append Tag if not '日'
+                    if tag != '日':
+                        s_display += f"/{tag}"
+                        
+                    if vals['statuses']:
+                        # prioritizing Lock status display
+                        status_str = "/".join(list(vals['statuses']))
+                        s_display = f"{s_display}({status_str})"
+                    
+                    # Formatting check: Show if Buy > 100k OR if "Lock" status (even if buy=0)
+                    has_buy_sig = b_amt > 100000
+                    has_sell_sig = s_amt > 100000
+                    is_special = len(vals['statuses']) > 0
+                    
+                    if has_buy_sig or (is_special and "锁仓" not in str(vals['statuses'])): 
+                        amt_str = ""
+                        if b_amt > 100000:
+                            amt_str = f"({b_amt/10000:.0f}万)"
+                            if b_amt > 100000000:
+                                amt_str = f"({b_amt/100000000:.1f}亿)"
+                        
+                        buy_strs.append(f"{s_display}{amt_str}")
+
+                    elif is_special and "锁仓" in str(vals['statuses']):
+                        buy_strs.append(f"{s_display}")
+
+                    if has_sell_sig:
+                        amt_str = f"({s_amt/10000:.0f}万)"
+                        if s_amt > 100000000:
+                            amt_str = f"({s_amt/100000000:.1f}亿)"
+                        sell_strs.append(f"{s_display}{amt_str}")
+
+                if not buy_strs and not sell_strs:
+                    continue
+                
                 final_rows.append({
                     '游资标签': label,
-                    '营业部名称': branch,
-                    '买入股票': " ".join(val['buy']),
-                    '卖出股票': " ".join(val['sell']),
-                    '上榜次数': len(val['buy']) + len(val['sell'])
+                    '营业部名称': "多席位/聚合", 
+                    '买入股票': " ".join(buy_strs),
+                    '卖出股票': " ".join(sell_strs),
+                    '上榜次数': len(buy_strs) + len(sell_strs)
                 })
-                
+
+            # Sort by Label
+            final_rows.sort(key=lambda x: x['游资标签'])
+            
             df_res = pd.DataFrame(final_rows)
             file_path = os.path.join(LHB_DIR, f"lhb_famous_{date_str}.csv")
             df_res.to_csv(file_path, index=False, encoding='utf-8-sig')
@@ -278,22 +484,57 @@ def process_and_save(df, date_str):
     except Exception as e:
         print(f"{Fore.RED}❌ 保存文件失败: {e}")
 
-if __name__ == "__main__":
-    # 默认跑当天的
-    today = datetime.now().strftime("%Y%m%d")
-    
-    # 如果现在还没收盘(比如上午)，可能没数据，或者只有部分
-    # 建议手动指定或者自动跑
-    
-    df = fetch_lhb_data(today)
-    if df is None:
-        # 尝试跑昨天的，方便调试
-        print(f"{Fore.YELLOW}⚠️ 尝试获取昨日数据作为测试...")
+
+def get_recent_trade_dates(days=5):
+    """
+    获取最近 N 个交易日 (包括今天如果今天也是交易日)
+    返回格式: ['20230101', '20230102', ...] (从旧到新)
+    """
+    try:
+        # fetch trade dates
+        df = ak.tool_trade_date_hist_sina()
+        df['trade_date'] = pd.to_datetime(df['trade_date'])
+        
+        today = datetime.now().date()
+        # Filter dates <= today
+        past_dates = df[df['trade_date'].dt.date <= today]
+        
+        if past_dates.empty:
+            return [today.strftime("%Y%m%d")]
+
+        # Get last N dates
+        recent = past_dates.iloc[-days:]['trade_date'].dt.strftime("%Y%m%d").tolist()
+        return recent
+    except Exception as e:
+        print(f"{Fore.RED}⚠️ 获取交易日历失败: {e}")
+        # Fallback: return today and yesterday
+        today_str = datetime.now().strftime("%Y%m%d")
         from datetime import timedelta
-        yest = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
-        df = fetch_lhb_data(yest)
-        process_and_save(df, yest)
-        fetch_famous_seats(yest)
-    else:
-        process_and_save(df, today)
-        fetch_famous_seats(today)
+        yest_str = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+        return [yest_str, today_str]
+
+if __name__ == "__main__":
+    # 智能查找最近的龙虎榜数据
+    # 策略: 获取最近 3 个交易日，倒序查找 (最新 -> 最旧)
+    # 这样可以处理周末、节假日、晚间未更新等情况
+    
+    print(f"{Fore.CYAN}📅 正在确定最近的交易日数据...")
+    
+    candidates = get_recent_trade_dates(days=3)
+    # Reverse to check latest first
+    candidates.reverse()
+    
+    found_date = None
+    
+    for date_str in candidates:
+        print(f"   👉 尝试日期: {date_str}")
+        df = fetch_lhb_data(date_str)
+        if df is not None and not df.empty:
+            found_date = date_str
+            process_and_save(df, date_str)
+            fetch_famous_seats(date_str)
+            break
+            
+    if not found_date:
+        print(f"{Fore.RED}❌ 最近 3 个交易日均未获取到数据，请检查网络或稍后再试。")
+

@@ -160,23 +160,47 @@ def load_lhb_info():
              for _, row in df.iterrows():
                  label = row['游资标签']
                  
-                 # 1. 处理买入
-                 buys = str(row.get('买入股票', '')).replace('nan', '')
-                 stock_names_b = re.split(r'[ ,、]+', buys)
-                 for s in stock_names_b:
-                     s = s.strip()
-                     if not s: continue
-                     if s not in seat_map: seat_map[s] = set()
-                     seat_map[s].add(f"💰{label}入场")
-                     
-                 # 2. 处理卖出
-                 sells = str(row.get('卖出股票', '')).replace('nan', '')
-                 stock_names_s = re.split(r'[ ,、]+', sells)
-                 for s in stock_names_s:
-                     s = s.strip()
-                     if not s: continue
-                     if s not in seat_map: seat_map[s] = set()
-                     seat_map[s].add(f"🏃{label}离场")
+                 # Helper to process string: "Stock(1亿) Stock/3日(2亿)"
+                 def parse_lhb_str(raw_str, default_prefix):
+                    if not raw_str or raw_str == 'nan': return
+                    # Split by space
+                    parts = raw_str.split(' ')
+                    for p in parts:
+                        p = p.strip()
+                        if not p: continue
+                        
+                        s_name = p
+                        note = ""
+                        
+                        if '(' in p:
+                            s_name = p.split('(')[0]
+                            # Capture content inside parenthesis, e.g. (1亿) or (🔒 锁仓)
+                            content = p.split('(')[1].rstrip(')')
+                            note = f"({content})"
+                        
+                        # Handle /Tag in name
+                        tag_info = ""
+                        if '/' in s_name:
+                            real_name = s_name.split('/')[0]
+                            tag_part = s_name.split('/')[1] # e.g. 3日
+                            s_name = real_name
+                            tag_info = f"/{tag_part}"
+                        
+                        if s_name not in seat_map: seat_map[s_name] = set()
+                        
+                        # Determine prefix based on content
+                        prefix = default_prefix
+                        if "锁仓" in note or "锁仓" in p:
+                            prefix = "🔒" # Lock
+                        elif "加仓" in note:
+                            prefix = "➕" # Add (Stronger than Buy)
+                        
+                        # Construct tag
+                        full_tag = f"{prefix}{label}{tag_info}{note}"
+                        seat_map[s_name].add(full_tag)
+
+                 parse_lhb_str(str(row.get('买入股票', '')), "💰")
+                 parse_lhb_str(str(row.get('卖出股票', '')), "🏃")
                      
          except Exception as e:
             print(f"{Fore.RED}❌ 游资数据加载失败: {e}")
@@ -377,7 +401,14 @@ def generate_strategy_pool():
         if name in lhb_seat_map:
             is_selected = True
             # 添加游资标签 (已去重)
-            seat_tags = sorted(list(lhb_seat_map[name]))
+            # Sort order: Lock/Add (🔒/➕) > Buy (💰) > Sell (🏃)
+            def tag_sort_key(t):
+                if t.startswith("🔒") or t.startswith("➕"): return 0
+                if t.startswith("💰"): return 1
+                if t.startswith("🏃"): return 2
+                return 3
+                
+            seat_tags = sorted(list(lhb_seat_map[name]), key=tag_sort_key)
             base_tags.extend(seat_tags)
         
         # --- 2.5 辨识度/人气判定 (新增) ---
