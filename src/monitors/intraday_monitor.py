@@ -282,10 +282,11 @@ def main():
 
         # 格式化数据
         name_disp = item['name'][:4]  # 截断名字防对齐乱
-        # 使用 format_amount 优化竞价额显示
+
+        # --- 优化点 1: 使用 format_amount 优化竞价额显示 ---
         amt_str = format_amount(item['call_amt'])
 
-        # 建议修改为（放宽到 20 字符）：
+        # --- 优化点 2: 构造 Tag 字符串 (放宽到 20 字符) ---
         tag_str = item['tag'].replace('★人气', '').replace('成交', '').strip()[:20]
 
         row_str = (
@@ -295,7 +296,7 @@ def main():
             f"{item['price']:>7.2f} "
             f"{item['bias']:>6.1f} "
             f"{item['vr']:>5.1f} "
-            f"{amt_str:<8} "
+            f"{amt_str:<8} "  # <--- 这里使用的是格式化后的 amt_str
             f"{item['call_pct']:>5.2f}  "
             f"{item['sig_color']}{item['sig_text']:<6}{Style.RESET_ALL} "
             f"{Fore.CYAN}{tag_str}{Style.RESET_ALL}"

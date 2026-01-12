@@ -233,8 +233,8 @@ def analyze_stock(row, history_info, pool_map, phase, sector_map=None):
     try:
         open_pct = float(row.get('open_pct', 0))
         auc_amt = float(row.get('auc_amt', 0))  # 竞价金额 (万)
-        
-        # --- 🚨 修复开始：强力读取昨日成交额 ---
+
+        # --- 🚨 修正后的逻辑：统一转换为 '万' 单位 ---
         last_amt = float(row.get('last_amt', 0))
         
         # 如果 last_amt 是 0，尝试直接读中文列名并解析单位
@@ -242,16 +242,19 @@ def analyze_stock(row, history_info, pool_map, phase, sector_map=None):
             # 兼容可能的中文列名
             raw_yest = row.get('昨日成交额', row.get('昨成交', '0'))
             raw_str = str(raw_yest).strip()
-            
-            if '亿' in raw_str:
-                last_amt = float(raw_str.replace('亿', '')) * 100000000
-            elif '万' in raw_str:
-                last_amt = float(raw_str.replace('万', '')) * 10000
-            else:
-                try:
-                    last_amt = float(raw_str)
-                except:
-                    last_amt = 0
+
+            try:
+                if '亿' in raw_str:
+                    # 1.5亿 -> 15000万
+                    last_amt = float(raw_str.replace('亿', '')) * 10000
+                elif '万' in raw_str:
+                    # 1500万 -> 1500万
+                    last_amt = float(raw_str.replace('万', ''))
+                else:
+                    # 假设纯数字是 元 -> 转为万
+                    last_amt = float(raw_str) / 10000
+            except:
+                last_amt = 0
         # --- 🚨 修复结束 ---
 
     except Exception as e:
@@ -272,7 +275,6 @@ def analyze_stock(row, history_info, pool_map, phase, sector_map=None):
     
     # [Fix] Normalize units: If > 100 Million, it's definitely Yuan. Convert to Wan.
     # 1 Yi Yuan = 10,000 Wan. 1 Yi Wan = 1 Trillion Yuan (Impossible for single stock)
-    if last_amt > 100_000_000: last_amt /= 10000.0
     if circ_mv > 100_000_000: circ_mv /= 10000.0
         
     yest_pct = info['yest_pct']
