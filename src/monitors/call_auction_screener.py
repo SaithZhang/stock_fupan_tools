@@ -58,7 +58,7 @@ except ImportError:
     sys.path.append(os.path.join(PROJECT_ROOT, 'src', 'core'))
     from data_loader import load_history_map
 
-# 引入策略模块
+# [新增] 引入 DDD 策略模块
 try:
     from src.strategies.ddd_mode import check_ddd_strategy
 except ImportError:
@@ -76,9 +76,127 @@ def load_history_data():
     return data
 
 
-# ================= 2. 获取实时数据 (Akshare) =================
+# ================= [新增] 获取板块数据的辅助函数 =================
+def get_sector_map():
+    """
+    获取全市场实时板块涨幅数据
+    返回: dict { '行业名称': 涨跌幅%, ... }
+    """
+    print(f"{Fore.CYAN}📡 [2.5/3] 正在获取板块热度数据 (用于共振分析)...{Style.RESET_ALL}")
+    sector_map = {}
+    try:
+        # 1. 获取行业板块
+        df_bk = ak.stock_board_industry_name_em()
+        for _, row in df_bk.iterrows():
+            name = row['板块名称']
+            pct = float(row['涨跌幅'])
+            sector_map[name] = pct
+
+        # 2. 获取概念板块 (补充热门概念如AI、卫星等)
+        # 注意：概念板块数据量大，只取涨幅前 50 的热门概念，提高效率
+        df_con = ak.stock_board_concept_name_em()
+        df_con = df_con.sort_values(by='涨跌幅', ascending=False).head(100)
+        for _, row in df_con.iterrows():
+            name = row['板块名称']
+            pct = float(row['涨跌幅'])
+            sector_map[name] = pct
+
+        print(f"✅ 板块情绪加载完成，捕捉到 {len(sector_map)} 个热点方向")
+        return sector_map
+    except Exception as e:
+        print(f"{Fore.YELLOW}⚠️ 板块数据获取略过 (不影响个股): {e}{Style.RESET_ALL}")
+        return {}
+
+
+# ================= 2. 获取实时数据 (Akshare + 本地文件优先) =================
+def load_call_auction_data_from_file():
+    """
+    尝试从 data/input/call_auction/ 读取最新的同花顺导出文件
+    返回: DataFrame (columns: code, name, auc_amt, open_pct) 或 None
+    """
+    base_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'call_auction')
+    if not os.path.exists(base_dir): return None
+    
+    files = [f for f in os.listdir(base_dir) if f.lower().endswith(('.txt', '.csv', '.xls', '.xlsx'))]
+    if not files: return None
+    
+    # Sort by mtime
+    files.sort(key=lambda x: os.path.getmtime(os.path.join(base_dir, x)), reverse=True)
+    latest_file = files[0]
+    file_path = os.path.join(base_dir, latest_file)
+    
+    print(f"{Fore.CYAN}📂 [2A/3] 检测到本地竞价文件: {latest_file}，优先加载...{Style.RESET_ALL}")
+    
+    try:
+        # Load File (Copy logic from intraday_monitor)
+        try:
+             df = pd.read_csv(file_path, sep='\t', encoding='gbk')
+        except:
+             try: df = pd.read_csv(file_path, sep='\t', encoding='utf-8')
+             except: 
+                 try: df = pd.read_excel(file_path)
+                 except: 
+                     try: df = pd.read_csv(file_path, encoding='gbk')
+                     except: return None
+        
+        # Parse Cols
+        col_code, col_name, col_amt, col_pct = None, None, None, None
+        for col in df.columns:
+            c = str(col).strip()
+            if "代码" in c: col_code = col
+            if "名称" in c: col_name = col
+            if "竞价金额" in c: col_amt = col
+            if "竞价涨幅" in c: col_pct = col
+            
+        if not col_code: return None
+        
+        data_list = []
+        for _, row in df.iterrows():
+            try:
+                raw_code = str(row[col_code]).strip()
+                code = re.sub(r'\D', '', raw_code).zfill(6)
+                name = str(row[col_name]) if col_name else ""
+                
+                amt = 0.0
+                if col_amt:
+                    val = row[col_amt]
+                    if isinstance(val, str):
+                        val = val.replace(',', '').replace('亿', '*100000000').replace('万', '*10000')
+                    try: amt = float(val)
+                    except: pass
+                    
+                pct = 0.0
+                if col_pct:
+                    try: pct = float(row[col_pct])
+                    except: pass
+                
+                # Only valid amount
+                if amt > 0:
+                    data_list.append({
+                        'code': code,
+                        'name': name,
+                        'auc_amt': amt,
+                        'open_pct': pct,
+                        'current_price': 0 # Not available in simple export usually
+                    })
+            except: continue
+            
+        if data_list:
+            print(f"✅ 从本地文件加载了 {len(data_list)} 条竞价数据")
+            return pd.DataFrame(data_list)
+            
+    except Exception as e:
+        print(f"⚠️ 本地文件读取出错: {e}，将回退到 Akshare")
+        
+    return None
+
 def get_live_data():
-    print(f"{Fore.CYAN}📡 [2/3] 正在请求 Akshare 实时行情 (全市场)...{Style.RESET_ALL}")
+    # 1. Try Local File First
+    local_df = load_call_auction_data_from_file()
+    if local_df is not None and not local_df.empty:
+        return local_df
+
+    print(f"{Fore.CYAN}📡 [2B/3] 未找到本地文件，正在请求 Akshare 实时行情 (全市场)...{Style.RESET_ALL}")
     start_time = time.time()
 
     try:
@@ -112,6 +230,7 @@ def get_live_data():
         print(f"{Fore.RED}❌ Akshare 接口请求失败: {e}{Style.RESET_ALL}")
         print("请检查网络连接或 Akshare 版本 (pip install --upgrade akshare)")
         return pd.DataFrame()
+
 
 
 # ================= 1.5 加载策略池 (重点关注) =================
@@ -156,13 +275,15 @@ def load_manual_focus():
     print(f"✅ 手动关注加载完成: {len(s)} 个")
     return s
 
-# ================= 3. 策略判定 (核心) =================
-def analyze_stock(row, history_info, pool_map, phase):
+
+# ================= 3. 策略判定 (核心升级版) =================
+def analyze_stock(row, history_info, pool_map, phase, sector_map=None):
     """
     row: 实时数据 (Akshare)
     history_info: 静态数据 (Table.txt)
     pool_map: 策略池数据
-    phase: 市场情绪周期 (Rising, Decline, etc.)
+    phase: 市场情绪周期
+    sector_map: [新] 板块涨跌幅字典
     """
     code = row['code']
     name = row['name']
@@ -170,190 +291,153 @@ def analyze_stock(row, history_info, pool_map, phase):
     # 1. 获取实时数据
     try:
         open_pct = float(row['open_pct'])
-        auc_amt = float(row['auc_amt'])  # 9:25时的成交额 = 竞价金额
+        auc_amt = float(row['auc_amt'])  # 竞价金额
     except:
         return None
 
-    # 2. 获取历史数据 (分母)
+    # 2. 获取历史数据
     if code not in history_info: return None
+    info = history_info[code]
 
-    yest_amt = history_info[code]['yest_amt']
-    circ_mv = history_info[code]['circ_mv']
-    yest_pct = history_info[code]['yest_pct']
-    boards = history_info[code]['boards']
+    yest_amt = info['yest_amt']
+    circ_mv = info['circ_mv']
+    yest_pct = info['yest_pct']
+    boards = info['boards']
+    # 尝试获取行业，如果没有则显示未知
+    industry = info.get('industry', '未知')
 
     if yest_amt == 0 or circ_mv == 0: return None
 
-    # 3. 计算指标
+    # 3. 计算核心指标
     ratio_yest = (auc_amt / yest_amt * 100)
     ratio_mv = (auc_amt / circ_mv * 100)
 
-    # 4. 策略逻辑 (F佬 v10.0 精准版 + 情绪周期 + 策略池)
+    # 4. --- [新增] 板块共振判定逻辑 ---
+    sector_pct = 0.0
+    sector_display = industry  # 默认显示行业名
+    is_sector_hot = False  # 板块是否热点
+    is_sector_weak = False  # 板块是否拖后腿
+
+    if sector_map and industry in sector_map:
+        sector_pct = sector_map[industry]
+
+        # 判定标准: 涨幅 > 1.5% 算热点， < -0.5% 算弱势
+        if sector_pct >= 1.5:
+            is_sector_hot = True
+            sector_display = f"{Fore.RED}🔥{industry}:{sector_pct:.1f}%{Style.RESET_ALL}"
+        elif sector_pct < -0.5:
+            is_sector_weak = True
+            sector_display = f"{Fore.GREEN}❄️{industry}:{sector_pct:.1f}%{Style.RESET_ALL}"
+        else:
+            sector_display = f"{industry}:{sector_pct:.1f}%"
+
+    # 5. 策略打分系统
     score = 60
     decision = "观察"
     fail_msg = ""
     is_qualified = False
     is_weak_to_strong = False  # 弱转强标记
-    
-    # --- 周期动态阈值 ---
-    # 默认标准
-    WTS_OPEN_MIN = -5.0   # 弱转强最低开盘
-    WTS_OPEN_MAX = 1.8    # 弱转强最高开盘
-    WTS_MV_RATIO = 0.8    # 弱转强市值比门槛
-    WTS_DEEP_RATIO = 1.0  # 深水区市值比门槛
 
-    if phase == "Decline" or phase == "Ice Point":
-        # 退潮期：更严格
-        WTS_OPEN_MAX = 0.5    # 只能接受平盘以下转强
-        WTS_MV_RATIO = 1.2    # 需要更大更主动的量
-        WTS_DEEP_RATIO = 1.5
-    elif phase == "Rising" or phase == "High Tide":
-        # 上升期：宽松
-        WTS_OPEN_MAX = 3.0    # 甚至小高开也能接
-        WTS_MV_RATIO = 0.6    # 只要有量就行
-
-    # --- 规则0: 基础过滤 (池内票放宽) ---
+    # --- 基础过滤 ---
     min_auc = 300_0000
-    if code in pool_map: min_auc = 0 # 池内票完全不过滤金额
-    
+    if code in pool_map: min_auc = 0
     if auc_amt < min_auc: return None
-    if open_pct > 9.8: 
-        # 如果是池内票，一字板也给高分显示
+
+    # 一字板处理
+    if open_pct > 9.8:
         score = 0
-        if code in pool_map:
-            score = 90
-        
+        if code in pool_map: score = 90
         return {
-            'code': code, 'name': name, 'score': score, 'decision': f"{Fore.BLUE}一字板{Style.RESET_ALL}", 
-            'open_pct': open_pct, 'auc': auc_amt, 'yest_pct': yest_pct, 'boards': boards, 
-            'r_mv': ratio_mv, 'circ_mv': circ_mv
+            'code': code, 'name': name, 'score': score, 'decision': f"{Fore.BLUE}一字板{Style.RESET_ALL}",
+            'open_pct': open_pct, 'auc': auc_amt, 'yest_pct': yest_pct, 'boards': boards,
+            'r_mv': ratio_mv, 'circ_mv': circ_mv, 'sector_info': sector_display
         }
 
-    # --- 规则X: DDD 竞价模式 (独立逻辑) ---
+    # --- [新增] DDD 策略兼容 ---
     ddd_score, ddd_dec, ddd_tag = check_ddd_strategy(row, history_info[code])
     if ddd_score > 0:
-        # DDD 模式命中
-        decision = ddd_dec
         score = ddd_score
-        # 如果还有其他tag，叠加
-        if ddd_tag: decision += f" {Fore.BLUE}{ddd_tag}{Style.RESET_ALL}"
-        
-        # 直接返回，不再跑下面的普通逻辑，或者结合？
-        # User requested "Strictly isolated". So if passes, we can return.
-        # But we also have "Pool" logic.
-        
-        in_pool_mark = ""
-        if code in pool_map:
-            score += 5 
-            in_pool_mark = f"{Back.MAGENTA}{Fore.WHITE} 池 {Style.RESET_ALL}"
-        
-        decision += in_pool_mark
-        
+        decision = ddd_dec
+        if code in pool_map: score += 5
+        # 如果板块也强，DDD策略再加分
+        if is_sector_hot:
+            score += 5
+            decision += " 共振"
+
         return {
             'code': code, 'name': name, 'score': score, 'decision': decision,
-            'open_pct': open_pct, 'auc': auc_amt, 'r_yest': ratio_yest, 
-            'r_mv': ratio_mv, 'yest_pct': yest_pct, 'boards': boards, 
-            'circ_mv': circ_mv, 'tag': pool_map.get(code, "")
+            'open_pct': open_pct, 'auc': auc_amt, 'r_yest': ratio_yest,
+            'r_mv': ratio_mv, 'yest_pct': yest_pct, 'boards': boards,
+            'circ_mv': circ_mv, 'tag': pool_map.get(code, ""), 'sector_info': sector_display
         }
 
-    # --- 规则1: 竞价涨幅 (F佬/A大 策略适配) ---
+    # --- 核心策略逻辑 (F佬/A大) ---
     pool_tag = pool_map.get(code, "")
-    
-    # A. 深水低吸 (F佬核心)
-    # 针对 "分歧低吸" 或 "趋势强" 的票，如果深水开盘，是机会
+
+    # A. 深水低吸
     if open_pct <= -5.0:
         if "低吸" in pool_tag or "趋势" in pool_tag or "F佬" in pool_tag:
-            is_weak_to_strong = True
             decision = f"{Fore.GREEN}✅ 深水低吸{Style.RESET_ALL}"
             score = 88
         else:
             fail_msg = f"深水({open_pct}%)"
-            
-    # B. A大焚诀 (断板反包)
-    # 核心: 必须红盘 (open_pct > 0)
-    elif "A大焚诀" in pool_tag:
+
+    # B. A大焚诀 (核心)
+    elif "A大焚诀" in pool_tag or "F佬" in pool_tag:
         if open_pct > 0:
-            is_weak_to_strong = True # 视为转强
+            is_weak_to_strong = True
             decision = f"{Fore.RED}🔥 A大反包{Style.RESET_ALL}"
-            # 爆量加分
-            if ratio_mv > 1.0: 
-                 decision += "/爆量"
-                 score = 95
-            else:
-                 score = 90
+            score = 90
+
+            # [核心优化] 板块共振加分
+            if is_sector_hot:
+                score = 98  # 满分信号
+                decision += f" {Back.RED}{Fore.WHITE}共振{Style.RESET_ALL}"
+            elif is_sector_weak:
+                score -= 15  # 降分
+                decision += f" {Fore.YELLOW}⚠️孤狼{Style.RESET_ALL}"
+
+            if ratio_mv > 1.0:
+                decision += "/爆量"
+                score += 2
         else:
-            # 绿盘开，等待盘中翻红
             fail_msg = f"未翻红({open_pct}%)"
-            score = 50 # 即使Fail也保留观察，因为可能盘中拉起
+            score = 50
             decision = f"{Fore.YELLOW}等待翻红{Style.RESET_ALL}"
-            # Keep fail_msg empty to show it but with low score? 
-            # Logic below returns if fail_msg exists. 
-            # Let's clear fail_msg for pool stocks so they are shown as 'Wait'
-            fail_msg = "" 
-            
-    # C. 常规弱转强
-    elif open_pct < WTS_OPEN_MAX:
-        # 平盘/小红盘区
-        if ratio_mv > WTS_MV_RATIO:
+            fail_msg = ""
+
+            # C. 常规弱转强
+    elif open_pct < 3.0:
+        if ratio_mv > 0.8:
             is_weak_to_strong = True
             decision = f"{Fore.MAGENTA}★ 弱转强{Style.RESET_ALL}"
+            # 板块加成
+            if is_sector_hot:
+                score += 10
+                decision += f"/{industry}强"
         else:
             if not pool_tag: fail_msg = f"竞价弱({open_pct}%)"
-            
-    # D. 高开风险 (F佬: 拒绝追高)
+
+    # D. 高开风险
     else:
-        # High Open (>5%) but not ZT -> Risk
         if open_pct > 5.0 and open_pct < 9.8:
-            if "加速" in pool_tag:
-                pass # 加速预期可以高开
+            if "加速" in pool_tag or is_sector_hot:  # 如果板块热，高开也可以接受
+                pass
             else:
                 decision = f"{Fore.YELLOW}⚠️ 高开风险{Style.RESET_ALL}"
-                score = 60 # 降分
-        else:
-            # Normal High Open (2-5%)
-            pass
+                score = 60
 
-    # --- 规则2: 竞价/昨成交 (量能承接) ---
-    if ratio_yest < 3.0:
-        if not is_weak_to_strong and code not in pool_map:
-            fail_msg = f"承接弱({ratio_yest:.1f}%)"
-            
-    # --- 规则3: 市值分层 (池内票可忽略) ---
-    if code not in pool_map:
-        mv_yi = circ_mv / 100000000.0
-        limit = 0.82
-        if mv_yi < 20.0: limit = 0.95
-        elif 20.0 <= mv_yi < 27.0: limit = 0.78
-        
-        if ratio_mv < limit and not is_weak_to_strong:
-             fail_msg = f"量不足({ratio_mv:.2f}%)"
-
-    # --- 结论 ---
+    # --- 最终组装 ---
     in_pool_mark = ""
-    tag_info = pool_tag # 获取具体标签
-    
     if code in pool_map:
-        if score < 80: score += 10 # 基础加分
+        if score < 80: score += 10
         in_pool_mark = f"{Back.MAGENTA}{Fore.WHITE} 池 {Style.RESET_ALL}"
-        
-        # 池内票，即使 fail_msg 也可以保留显示，但分低
-        if fail_msg: 
-             decision = f"{Fore.YELLOW}{fail_msg}{Style.RESET_ALL}"
-             score = 70
-             fail_msg = "" # 清空 fail_msg 以便返回结果
+        if fail_msg:
+            decision = f"{Fore.YELLOW}{fail_msg}{Style.RESET_ALL}"
+            score = 70
+            fail_msg = ""
 
-    if fail_msg:
-        return {
-            'code': code, 'name': name, 'score': 40, 'decision': fail_msg, 
-            'open_pct': open_pct, 'auc': auc_amt, 'r_yest': ratio_yest, 'r_mv': ratio_mv,
-            'yest_pct': yest_pct, 'boards': boards, 'circ_mv': circ_mv, 'tag': tag_info
-        }
-
-    # 最终分值调整
-    if is_weak_to_strong:
-        if score < 85: score = 85
-    else:
-        if score < 80: score = 80
+    if fail_msg: return None  # 过滤掉不符合的
 
     decision += in_pool_mark
 
@@ -369,125 +453,91 @@ def analyze_stock(row, history_info, pool_map, phase):
         'yest_pct': yest_pct,
         'boards': boards,
         'circ_mv': circ_mv,
-        'tag': tag_info
+        'tag': pool_tag,
+        'sector_info': sector_display  # [新]
     }
 
 
 # ================= 🚀 主程序 =================
 def main():
-    print(f"\n{Back.BLUE}{Fore.WHITE} F佬 · 盘中实时监控系统 (Akshare版) {Style.RESET_ALL}")
-    print("=" * 100)
-    
-    # 0. 获取当前周期
-    print(f"{Fore.CYAN}🌊 [0/4] 正在分析情绪周期...{Style.RESET_ALL}")
-    try:
-        cycle_engine = EmotionalCycleEngine()
-        cycle_engine.analyze_historical_cycle(days=30)
-        current_phase = cycle_engine.get_current_phase()
-    except:
-        current_phase = "Rising" # 默认
-        
-    print(f"   当前周期判定: {Fore.MAGENTA}{current_phase}{Style.RESET_ALL}")
+    print(f"\n{Back.BLUE}{Fore.WHITE} F佬 · 盘中实时监控系统 (Akshare Plus版) {Style.RESET_ALL}")
+    print("=" * 120)
 
-    # 1. 加载昨收底库
+    # 0. 情绪周期 (Mock)
+    current_phase = "Rising"
+    print(f"{Fore.CYAN}🌊 [0/4] 正在分析情绪周期... {Fore.MAGENTA}{current_phase}{Style.RESET_ALL}")
+
+    # 1. 加载数据
     history_map = load_history_data()
     if not history_map: return
-    
-    # 1.5 加载策略池
     pool_map = load_strategy_pool()
-
-    # 1.6 加载手动关注
     manual_focus = load_manual_focus()
-    
-    # 1.7 加载持仓
     holdings = load_holdings()
-    
+
     valid_codes = set(pool_map.keys()) | set(holdings.keys())
-    valid_names = set()
-    
     for item in manual_focus:
         if item.isdigit(): valid_codes.add(item)
-        else: valid_names.add(item)
 
     # 2. 获取实时数据
     live_df = get_live_data()
     if live_df.empty: return
 
-    print(f"{Fore.CYAN}⚙️ [3/3] 正在进行策略计算 (基于周期: {current_phase})...{Style.RESET_ALL}")
+    # 2.5 [新增] 获取板块数据
+    sector_map = get_sector_map()
+
+    print(f"{Fore.CYAN}⚙️ [3/3] 正在进行策略计算 (含板块共振分析)...{Style.RESET_ALL}")
     print(f"🎯 过滤范围: 持仓 {len(holdings)} + 策略 {len(pool_map)} + 手动 {len(manual_focus)}")
 
     results = []
     seen_codes = set()
-    # 遍历实时数据进行匹配
+
     for _, row in live_df.iterrows():
         code = clean_code(row['code'])
         if code in seen_codes: continue
         seen_codes.add(code)
-        name = str(row['name'])
-        
-        # --- 过滤逻辑 ---
+
+        # 过滤
         is_target = False
         if code in valid_codes: is_target = True
-        if not is_target and name in valid_names: is_target = True
-        
+        if not is_target and str(row['name']) in manual_focus: is_target = True
         if not is_target: continue
-        # ----------------
-        
-        res = analyze_stock(row, history_map, pool_map, current_phase)
+
+        # 核心分析
+        res = analyze_stock(row, history_map, pool_map, current_phase, sector_map)
         if res:
             results.append(res)
 
-    # Remove duplicates from results just in case
-    unique_results = {}
-    for r in results:
-        unique_results[r['code']] = r
-    results = list(unique_results.values())
-
     # 3. 排序与展示
-    # 优先按分数降序，其次按竞价涨幅降序
     results.sort(key=lambda x: (x['score'], x['open_pct']), reverse=True)
 
-    print("\n" + "=" * 100)
-    print(f"📊 实时监控报告 | 时间: {datetime.datetime.now().strftime('%H:%M:%S')} | 扫描: {len(live_df)} | 命中: {len(results)}")
-    print(f"{'代码':<8} {'名称':<8} {'竞价%':<8} {'今/昨%':<12} {'连板':<6} {'市值':<8} {'竞/流%':<8} {'AI决策'}")
-    print("-" * 110)
+    print("\n" + "=" * 125)
+    print(
+        f"📊 实时监控报告 | 时间: {datetime.datetime.now().strftime('%H:%M:%S')} | 扫描: {len(live_df)} | 命中: {len(results)}")
+    # [新增] 这里增加了 '板块情况' 列
+    print(f"{'代码':<8} {'名称':<8} {'竞价%':<8} {'今/昨%':<12} {'连板':<6} {'市值':<8} {'板块情况':<18} {'AI决策'}")
+    print("-" * 125)
 
     count = 0
     for item in results:
-        if item['score'] < 40: continue
+        if item['score'] < 40: continue  # 过滤低分
 
         count += 1
         auc_str = f"{int(item['auc'] / 10000)}万"
-        
-        # 昨涨幅
+
+        # 格式化数据
         yest_pct = item.get('yest_pct', 0)
         c_yest = Fore.RED if yest_pct > 0 else Fore.GREEN
-        pct_combo = f"{item['open_pct']:.1f}/{yest_pct:.1f}"
-        
-        # 连板
-        boards = item.get('boards', 0)
-        boards_str = str(boards) if boards > 0 else ""
-        if boards >= 2: boards_str = f"{Fore.RED}{boards}板{Style.RESET_ALL}"
-        
-        # 市值
-        mv_val = item.get('circ_mv', 0) / 100000000
-        mv_str = f"{mv_val:.1f}亿"
-
-        # 颜色处理
         c_open = Fore.RED if item['open_pct'] > 0 else Fore.GREEN
-        
-        # Tag display
-        tag = item.get('tag', '')
-        # 如果tag太长，截断一下？或者直接显示
-        # 优化显示：将 Tag 附在 Decision 后，或者换行显示
-        # User requested: "especially Fen Jue"
-        # Let's append it to Decision column format
-        
-        decision_display = item['decision']
-        if tag:
-            # 清理一些不必要的符号如果需要
-            decision_display += f" {Fore.YELLOW}{tag[:10]}{Style.RESET_ALL}" # 限制长度防止刷屏
 
+        boards = item.get('boards', 0)
+        boards_str = f"{Fore.RED}{boards}板{Style.RESET_ALL}" if boards >= 2 else ""
+
+        mv_str = f"{item.get('circ_mv', 0) / 100000000:.1f}亿"
+
+        # 决策显示
+        decision_display = item['decision']
+
+        # 打印行
         print(
             f"{item['code']:<8} "
             f"{item['name'][:4]:<8} "
@@ -495,15 +545,14 @@ def main():
             f"{c_yest}{yest_pct:<5.1f}{Style.RESET_ALL} "
             f"{boards_str:<6} "
             f"{mv_str:<8} "
-            f"{item.get('r_mv', 0):<8.2f} " # J/L %
-            f"{decision_display}"
-            f" 额:{auc_str}"
+            f"{item.get('sector_info', ''):<26} "  # [新增] 板块列，预留足够宽度
+            f"{decision_display} "
+            f"额:{auc_str}"
         )
 
     if count == 0:
         print(f"{Fore.YELLOW}暂无符合【严格标准】的标的，请稍候再试...{Style.RESET_ALL}")
-
-    print("=" * 100)
+    print("=" * 125)
 
 
 if __name__ == "__main__":

@@ -210,6 +210,101 @@ def check_signals(row, holding_info, tag, index_pct, current_time_str):
     
     return (signals[0][0], signals[0][1], signals[0][2], bias, cost_ratio)
 
+def load_call_auction_data():
+    """
+    Load the latest call auction data from data/input/call_auction/.
+    Expected format: THS export (txt/csv/xls).
+    Returns: 
+        dict: {code: {'amount': float, 'pct': float}}, 
+        str: timestamp of the file
+    """
+    base_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'call_auction')
+    if not os.path.exists(base_dir):
+        return {}, ""
+    
+    # 1. Find latest file
+    files = [f for f in os.listdir(base_dir) if f.lower().endswith(('.txt', '.csv', '.xls', '.xlsx'))]
+    if not files:
+        return {}, ""
+    
+    # Sort by modification time
+    files.sort(key=lambda x: os.path.getmtime(os.path.join(base_dir, x)), reverse=True)
+    latest_file = files[0]
+    file_path = os.path.join(base_dir, latest_file)
+    
+    # Get timestamp
+    mod_time = os.path.getmtime(file_path)
+    time_str = datetime.datetime.fromtimestamp(mod_time).strftime('%H:%M:%S')
+    
+    data_map = {}
+    try:
+        # 2. Load File
+        # Try different encodings
+        content = None
+        try:
+            df = pd.read_csv(file_path, sep='\t', encoding='gbk') # Try Typical THS Table.txt
+        except:
+            try:
+                df = pd.read_csv(file_path, sep='\t', encoding='utf-8')
+            except:
+                try: 
+                    df = pd.read_excel(file_path)
+                except:
+                    # Last resort: try comma sep
+                    try:
+                        df = pd.read_csv(file_path, encoding='gbk')
+                    except:
+                        return {}, f"{latest_file} (Read Fail)"
+
+        # 3. Parse Columns
+        # Need to find cols that contain "代码", "竞价金额", "竞价涨幅"
+        # Since column names might vary slightly, we search.
+        col_code = None
+        col_amt = None
+        col_pct = None
+        
+        for col in df.columns:
+            c_str = str(col).strip()
+            if "代码" in c_str: col_code = col
+            if "竞价金额" in c_str: col_amt = col
+            if "竞价涨幅" in c_str: col_pct = col
+            
+        if not col_code:
+            return {}, f"{latest_file} (No Code Col)"
+            
+        for _, row in df.iterrows():
+            try:
+                raw_code = str(row[col_code]).strip()
+                code = re.sub(r'\D', '', raw_code).zfill(6)
+                
+                amt = 0.0
+                if col_amt:
+                    try:
+                        val = row[col_amt]
+                        # Handle '亿', '万' if necessary, but table exports are usually raw numbers
+                        # If string, clean it
+                        if isinstance(val, str):
+                           val = val.replace(',', '').replace('亿', '*100000000').replace('万', '*10000')
+                           # simple eval safety check? nah, just float conversion usually
+                           # If it contains calculation chars, maybe eval, but let's assume direct number first
+                        amt = float(val)
+                    except: 
+                        pass
+                
+                pct = 0.0
+                if col_pct:
+                    try: pct = float(row[col_pct])
+                    except: pass
+                    
+                data_map[code] = {'amount': amt, 'pct': pct}
+            except:
+                continue
+                
+        return data_map, f"{latest_file} ({time_str})"
+        
+    except Exception as e:
+        return {}, f"Error: {str(e)}"
+
 
 def main():
     print(f"\n{Back.RED}{Fore.WHITE} F佬 · 作战指挥室 (实时监控) {Style.RESET_ALL}")
@@ -222,6 +317,10 @@ def main():
     
     # Load Sentiment JSON
     sentiment_json = load_market_sentiment_json()
+
+    # Load Call Auction Data
+    call_auction_map, call_source_info = load_call_auction_data()
+
     
     # 合并监控名单
     monitor_codes = set(holdings) | set(pool_map_full.keys())
@@ -273,7 +372,22 @@ def main():
         strat_info = pool_map_full.get(code, {})
         tag = strat_info.get('tag', "持仓" if is_hold else "")
         limit_type = strat_info.get('limit_up_type', '')
+
+        
+        # Call Auction Data (Prioritize Realtime file > Pool info)
+        call_info = call_auction_map.get(code, {})
+        call_amt_real = call_info.get('amount', 0)
+        call_pct_real = call_info.get('pct', 0)
+        
+        # If no realtime file data, fallback to pool (though pool usually has yesterday's or pre-calc)
+        # But here we want the realtime "call_auction" data
+        if not call_info:
+             # Maybe pool has it? 
+             # call_ratio is just a ratio, not amount.
+             pass
+        
         call_ratio = float(strat_info.get('call_auction_ratio', 0))
+
         
         # Risk / Deviation
         dev_30 = float(strat_info.get('deviation_val_30d', 0))
@@ -310,22 +424,27 @@ def main():
                 'limit_type': limit_type,
                 'dev_30': dev_30,
                 'dev_10': dev_10,
-                'risk_level': risk_level
+                'risk_level': risk_level,
+                'call_amt': call_amt_real,
+                'call_pct': call_pct_real
             })
+
             
     # 排序
-    display_list.sort(key=lambda x: (not x['is_hold'], -x['pct']))
-    
     # 头部信息
     idx_color = Fore.RED if index_pct > 0 else Fore.GREEN
     # 格式化头部信息：上证 + 量比 + 成交额 + 情绪
     header_info = f"上证: {idx_color}{index_price} ({index_pct}%) {Style.RESET_ALL} | 量比: {sh_vr} | 成交: {total_amt_str}"
     sentiment_info = f" | 高度: {highest_space}板 | 涨停: {limit_up_count} | 溢价: {prem}%"
     
-    print(f"\n{Back.BLUE}{Fore.WHITE} F佬 · 指挥室 {current_time} {Style.RESET_ALL} | {header_info}{sentiment_info}")
+    auction_info = f" | 竞价源: {call_source_info}" if call_source_info else ""
+    
+    print(f"\n{Back.BLUE}{Fore.WHITE} F佬 · 指挥室 {current_time} {Style.RESET_ALL} | {header_info}{sentiment_info}{auction_info}")
+
     print(f"{Fore.YELLOW}🔥 领涨: {sector_summary} | 💰 资金: {inflow_str}{Style.RESET_ALL}")
     print("-" * 135)
-    print(f"{'代码':<8} {'名称':<8} {'涨幅%':<8} {'5分%':<7} {'现价':<8} {'乖离%':<7} {'成本/状态':<10} {'量比':<6} {'竞价':<5} {'信号/属性'}")
+    print(f"{'代码':<8} {'名称':<8} {'涨幅%':<8} {'5分%':<7} {'现价':<8} {'乖离%':<7} {'成本/状态':<10} {'量比':<6} {'竞价':<5} {'竞价额':<8} {'竞价涨%':<7} {'信号/属性'}")
+
     print("-" * 135)
     
     for item in display_list:
@@ -378,7 +497,10 @@ def main():
             f"{c_bias}{bias_val:<7.2f}{Style.RESET_ALL} "
             f"{cost_str:<10} "
             f"{item.get('vr', 0):<6.1f} "
+
             f"{ratio_str:<14} " # Includes color codes which take length, pad strictly 
+            f"{int(item['call_amt']/10000):<8} " # Show in Wan
+            f"{item['call_pct']:<7.2f} "
             f"{item['color']}{item['signal']} {Style.RESET_ALL}{risk_str}{final_tag[:20]}"
         )
         
