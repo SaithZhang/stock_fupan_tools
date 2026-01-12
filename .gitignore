@@ -20,3 +20,9 @@ ths_clipboard.txt
 
 # Browser Data
 user_data/
+
+# Temporary & Logs
+*.log
+debug_*.py
+inspect_*.py
+verify*.txt
