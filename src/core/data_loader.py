@@ -206,6 +206,9 @@ def _parse_ths_csv(target_file):
             desc = safe_str(row.get(col_desc))
             if desc and len(desc) < 20: tags.append(desc) 
 
+            # Sanity check
+            if item['limit_days'] > 50: item['limit_days'] = 0
+
             if item['limit_days'] > 0: tags.append(f"{item['limit_days']}板")
 
             reason = safe_str(row.get(col_reason))
@@ -472,7 +475,8 @@ def load_ths_data_enhanced():
     col_mv = next((c for c in df.columns if '流通市值' in c), None)
     col_pct = next((c for c in df.columns if '涨幅' in c and '竞价' not in c and '10' not in c), None)
     col_auc_amt = next((c for c in df.columns if '早盘竞价金额' in c or '竞价金额' in c), None) # Try to find bid amount
-    
+    col_ind = next((c for c in df.columns if '所属行业' in c or '行业' in c), None) # Map Industry
+
     # 连板提取
     col_zt = next((c for c in df.columns if '连板' in c or '几天几板' in c), None)
 
@@ -498,6 +502,9 @@ def load_ths_data_enhanced():
                 # 提取数字
                 nums = re.findall(r'\d+', b_str)
                 if nums: boards = int(nums[-1]) # 取最后一个数字 usually "3天2板" -> 2
+                
+                # Sanity check for weird THS coding (e.g. 65537)
+                if boards > 100: boards = 0
             
             auc_amt = 0.0
             if col_auc_amt:
@@ -510,7 +517,8 @@ def load_ths_data_enhanced():
                 'circ_mv': mv,
                 'yest_pct': pct,
                 'boards': boards,
-                'yest_bid_amt': auc_amt # Yesterday's Bid Amount
+                'yest_bid_amt': auc_amt, # Yesterday's Bid Amount
+                'industry': str(row.get(col_ind, '未知')) if col_ind else '未知'
             }
         except:
             continue

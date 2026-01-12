@@ -57,6 +57,7 @@ except ImportError:
     sys.path.append(os.path.join(PROJECT_ROOT, 'src', 'core'))
     sys.path.append(os.path.join(PROJECT_ROOT, 'src', 'core'))
     from data_loader import load_history_map
+from src.utils.data_loader import parse_call_auction_file, get_latest_call_auction_file
 
 # [新增] 引入 DDD 策略模块
 try:
@@ -109,139 +110,16 @@ def get_sector_map():
 
 
 # ================= 2. 获取实时数据 (Akshare + 本地文件优先) =================
-def parse_call_auction_file(file_path):
-    """
-    独立的文件解析逻辑，便于单元测试
-    """
-    if not os.path.exists(file_path): return None
-
-    # 1. Read Content
-    content = ""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f: content = f.read()
-    except:
-        try:
-            with open(file_path, 'r', encoding='gbk') as f: content = f.read()
-        except:
-            print(f"{Fore.RED}❌ 无法读取文件: {file_path}{Style.RESET_ALL}")
-            return None
-            
-    lines = [line.strip() for line in content.split('\n') if line.strip()]
-    
-    # 2. Find Header
-    header_idx = -1
-    header_parts = []
-    for i, line in enumerate(lines[:20]):
-        if "代码" in line and ("名称" in line or "涨幅" in line):
-            header_idx = i
-            header_parts = line.split()
-            break
-            
-    if header_idx == -1: 
-        print(f"{Fore.RED}❌ 未找到表头行 (需包含 '代码'){Style.RESET_ALL}")
-        return None
-
-    # 3. Map Columns
-    idx_code = -1
-    idx_name = -1
-    idx_amt = -1
-    idx_pct = -1
-    
-    for i, h in enumerate(header_parts):
-        if "代码" in h: idx_code = i
-        if "名称" in h: idx_name = i
-        if h in ["竞价金额", "竞价额", "早盘竞价金额"]: idx_amt = i
-        if h in ["竞价涨幅", "竞价涨幅%"]: idx_pct = i
-        
-    # Lazy Match for amount/pct if not precise
-    if idx_amt == -1:
-        for i, h in enumerate(header_parts):
-            if "竞价金额" in h: idx_amt = i; break
-            
-    if idx_code == -1 or idx_amt == -1:
-        print(f"{Fore.RED}❌ 缺少关键列: CodeIdx={idx_code}, AmtIdx={idx_amt}{Style.RESET_ALL}")
-        print(f"Header: {header_parts}")
-        return None
-
-    # 4. Parse Rows
-    res_map = {}
-    
-    # Helper: Parse Wan/Yi
-    def parse_wan(x):
-        try:
-            if not x or x == '--': return 0.0
-            s = str(x).replace('亿', '*10000').replace('万', '').replace(' ', '').replace(',', '')
-            if '亿' in str(x): return eval(s)
-            return float(s)
-        except: return 0.0
-
-    # print(f"正在解析数据，表头长度: {len(header_parts)}")
-    
-    for line in lines[header_idx+1:]:
-        parts = line.split()
-        if len(parts) < max(idx_code, idx_amt) + 1: continue
-        
-        try:
-            # Code
-            code = re.sub(r"\D", "", parts[idx_code]).zfill(6)
-            
-            # Name
-            name = parts[idx_name] if (idx_name != -1 and len(parts) > idx_name) else "未知"
-            
-            # Amt
-            raw_amt = parts[idx_amt]
-            # Smart fix: if parts split incorrectly due to spaces in name?
-            # Usually stock names don't have spaces.
-            
-            auc_val = 0.0
-            # If raw_amt is a large integer string "4084080" -> it is Yuan.
-            # If it is "1.5亿" -> parse_wan -> 15000 Wan.
-            
-            if raw_amt.replace('.','').isdigit():
-                 # Pure number, assume Yuan if > 100000? 
-                 # Or verify unit.
-                 # User data: 4084080. This is 408 Wan.
-                 # So pure number = Yuan.
-                 auc_val = float(raw_amt) / 10000.0
-            else:
-                 auc_val = parse_wan(raw_amt)
-                 
-            # Pct
-            pct_val = 0.0
-            if idx_pct != -1 and len(parts) > idx_pct:
-                try:
-                    pct_val = float(str(parts[idx_pct]).replace('%', '').replace('+', ''))
-                except: pass
-            
-            res_map[code] = {
-                'code': code,
-                'name': name,
-                'auc_amt': auc_val,
-                'open_pct': pct_val
-            }
-        except: continue
-            
-    if res_map:
-        return pd.DataFrame(list(res_map.values()))
-    return None
-
 def load_call_auction_data_from_file():
     """
     尝试从 data/input/call_auction/ 读取最新的同花顺导出文件
-    使用手动行解析模式，以最大程度兼容 '复制粘贴' 产生的混乱分隔符
+    使用共享模块
     """
-    base_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'call_auction')
-    if not os.path.exists(base_dir): return None
+    file_path = get_latest_call_auction_file()
+    if not file_path: return None
     
-    files = [f for f in os.listdir(base_dir) if f.lower().endswith(('.txt', '.csv', '.xls', '.xlsx'))]
-    if not files: return None
-    
-    # Sort by mtime
-    files.sort(key=lambda x: os.path.getmtime(os.path.join(base_dir, x)), reverse=True)
-    latest_file = files[0]
-    file_path = os.path.join(base_dir, latest_file)
-    
-    print(f"{Fore.CYAN}📂 [2A/3] 检测到本地竞价文件: {latest_file}，优先加载...{Style.RESET_ALL}")
+    filename = os.path.basename(file_path)
+    print(f"{Fore.CYAN}📂 [2A/3] 检测到本地竞价文件: {filename}，优先加载...{Style.RESET_ALL}")
     
     df = parse_call_auction_file(file_path)
     if df is not None and not df.empty:
@@ -283,6 +161,9 @@ def get_live_data():
 
         # 过滤掉退市或无数据
         df = df[df['open_pct'].notnull()]
+        
+        # [Fix] Akshare returns Amount in Yuan, convert to Wan to match local file
+        df['auc_amt'] = df['auc_amt'].fillna(0) / 10000.0
 
         print(f"✅ 实时数据获取成功，耗时 {time.time() - start_time:.2f}秒，共 {len(df)} 条")
         return df
@@ -339,7 +220,7 @@ def load_manual_focus():
 # ================= 3. 策略判定 (核心升级版) =================
 def analyze_stock(row, history_info, pool_map, phase, sector_map=None):
     """
-    row: 实时数据 (Akshare)
+    row: 实时数据 (Akshare 或 Local) - Amount单位: 万
     history_info: 静态数据 (Table.txt)
     pool_map: 策略池数据
     phase: 市场情绪周期
@@ -351,7 +232,10 @@ def analyze_stock(row, history_info, pool_map, phase, sector_map=None):
     # 1. 获取实时数据
     try:
         open_pct = float(row['open_pct'])
-        auc_amt = float(row['auc_amt'])  # 竞价金额
+        auc_amt = float(row['auc_amt'])  # 竞价金额 (万)
+        
+        # [Fix] Use last_amt from local file if available, else from history
+        last_amt = float(row.get('last_amt', 0))
     except:
         return None
 
@@ -359,17 +243,26 @@ def analyze_stock(row, history_info, pool_map, phase, sector_map=None):
     if code not in history_info: return None
     info = history_info[code]
 
-    yest_amt = info['yest_amt']
-    circ_mv = info['circ_mv']
+    # Pre-market data might not have last_amt if not explicitly added
+    if last_amt == 0:
+        last_amt = info.get('yest_amt', 0) # Could be Yuan
+        
+    circ_mv = info['circ_mv'] # Could be Yuan
+    
+    # [Fix] Normalize units: If > 100 Million, it's definitely Yuan. Convert to Wan.
+    # 1 Yi Yuan = 10,000 Wan. 1 Yi Wan = 1 Trillion Yuan (Impossible for single stock)
+    if last_amt > 100_000_000: last_amt /= 10000.0
+    if circ_mv > 100_000_000: circ_mv /= 10000.0
+        
     yest_pct = info['yest_pct']
     boards = info['boards']
     # 尝试获取行业，如果没有则显示未知
     industry = info.get('industry', '未知')
 
-    if yest_amt == 0 or circ_mv == 0: return None
+    if last_amt == 0 or circ_mv == 0: return None
 
     # 3. 计算核心指标
-    ratio_yest = (auc_amt / yest_amt * 100)
+    ratio_yest = (auc_amt / last_amt * 100)
     ratio_mv = (auc_amt / circ_mv * 100)
 
     # 4. --- [新增] 板块共振判定逻辑 ---
@@ -518,7 +411,8 @@ def analyze_stock(row, history_info, pool_map, phase, sector_map=None):
         'boards': boards,
         'circ_mv': circ_mv,
         'tag': pool_tag,
-        'sector_info': sector_display  # [新]
+        'sector_info': sector_display,  # [新]
+        'last_amt': last_amt # [New] Pass explicitly for display
     }
 
 
@@ -578,15 +472,26 @@ def main():
     print(
         f"📊 实时监控报告 | 时间: {datetime.datetime.now().strftime('%H:%M:%S')} | 扫描: {len(live_df)} | 命中: {len(results)}")
     # [新增] 这里增加了 '板块情况' 列
-    print(f"{'代码':<8} {'名称':<8} {'竞价%':<8} {'今/昨%':<12} {'连板':<6} {'市值':<8} {'板块情况':<18} {'AI决策'}")
-    print("-" * 125)
+    print(f"{'代码':<8} {'名称':<8} {'竞价%':<6} {'昨幅%':<6} {'连板':<6} {'市值':<8} {'昨额':<8} {'板块情况':<12} {'AI决策'}")
+    print("-" * 140)
 
     count = 0
     for item in results:
         if item['score'] < 40: continue  # 过滤低分
 
         count += 1
-        auc_str = f"{int(item['auc'] / 10000)}万"
+        auc_str = f"{int(item['auc'])}万"
+        
+        # 格式化昨成交额
+        yest_amt_val = item.get('last_amt', 0)
+        # Fallback to ratio base if last_amt missing from explicit field but used in ratio
+        if yest_amt_val == 0 and item.get('r_yest', 0) > 0:
+             yest_amt_val = item['auc'] / (item['r_yest'] / 100)
+             
+        if yest_amt_val > 10000:
+            yest_str = f"{yest_amt_val/10000:.1f}亿"
+        else:
+            yest_str = f"{int(yest_amt_val)}万"
 
         # 格式化数据
         yest_pct = item.get('yest_pct', 0)
@@ -596,7 +501,9 @@ def main():
         boards = item.get('boards', 0)
         boards_str = f"{Fore.RED}{boards}板{Style.RESET_ALL}" if boards >= 2 else ""
 
-        mv_str = f"{item.get('circ_mv', 0) / 100000000:.1f}亿"
+        # MV is now in Wan (normalized), so divide by 10000 to get Yi
+        mv_val = item.get('circ_mv', 0)
+        mv_str = f"{mv_val / 10000.0:.1f}亿"
 
         # 决策显示
         decision_display = item['decision']
@@ -605,11 +512,12 @@ def main():
         print(
             f"{item['code']:<8} "
             f"{item['name'][:4]:<8} "
-            f"{c_open}{item['open_pct']:>5.2f}{Style.RESET_ALL}/"
-            f"{c_yest}{yest_pct:<5.1f}{Style.RESET_ALL} "
+            f"{c_open}{item['open_pct']:>6.2f}{Style.RESET_ALL} "
+            f"{c_yest}{yest_pct:>6.1f}{Style.RESET_ALL} "
             f"{boards_str:<6} "
             f"{mv_str:<8} "
-            f"{item.get('sector_info', ''):<26} "  # [新增] 板块列，预留足够宽度
+            f"{yest_str:<8} "  # Added Yesterday Amount
+            f"{item.get('sector_info', ''):<20} "
             f"{decision_display} "
             f"额:{auc_str}"
         )

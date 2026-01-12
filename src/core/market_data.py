@@ -58,6 +58,8 @@ class MarketDataManager:
                 df.columns = [c.strip() for c in df.columns]
                 df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
                 
+                self.file_loaded = filepath
+                
                 # Ensure '代码' is stripped
                 if '代码' in df.columns:
                     df['代码'] = df['代码'].str.strip()
@@ -230,7 +232,7 @@ class MarketDataManager:
         if self.calculated is None: self.calculated = {}
         
         self.calculated.update({
-            'date': getattr(self, 'file_loaded', '').split('dapan-')[-1].replace('.txt', ''),
+            'date': (self.file_loaded or '').split('dapan-')[-1].replace('.txt', ''),
             'total_turnover': total_turnover,
             'indices': index_data,
             'note': "Turnover is SH000001 + SZ399001"

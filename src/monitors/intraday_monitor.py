@@ -28,7 +28,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
 # Append PROJECT_ROOT to sys.path to allow imports from src
 sys.path.append(PROJECT_ROOT)
 
-from src.utils.data_loader import load_holdings, load_pool_full, load_history_basics, load_manual_focus, HOLDINGS_PATH, STRATEGY_POOL_PATH, get_latest_history_path
+from src.utils.data_loader import load_holdings, load_pool_full, load_history_basics, load_manual_focus, HOLDINGS_PATH, STRATEGY_POOL_PATH, get_latest_history_path, get_latest_call_auction_file, parse_call_auction_file
 
 
 # 引入核心模块
@@ -212,95 +212,54 @@ def check_signals(row, holding_info, tag, index_pct, current_time_str):
 
 def load_call_auction_data():
     """
-    Load the latest call auction data from data/input/call_auction/.
-    Expected format: THS export (txt/csv/xls).
+    Load the latest call auction data using shared utility.
     Returns: 
         dict: {code: {'amount': float, 'pct': float}}, 
         str: timestamp of the file
     """
-    base_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'call_auction')
-    if not os.path.exists(base_dir):
+    file_path = get_latest_call_auction_file()
+    if not file_path:
         return {}, ""
-    
-    # 1. Find latest file
-    files = [f for f in os.listdir(base_dir) if f.lower().endswith(('.txt', '.csv', '.xls', '.xlsx'))]
-    if not files:
-        return {}, ""
-    
-    # Sort by modification time
-    files.sort(key=lambda x: os.path.getmtime(os.path.join(base_dir, x)), reverse=True)
-    latest_file = files[0]
-    file_path = os.path.join(base_dir, latest_file)
     
     # Get timestamp
     mod_time = os.path.getmtime(file_path)
     time_str = datetime.datetime.fromtimestamp(mod_time).strftime('%H:%M:%S')
+    filename = os.path.basename(file_path)
     
-    data_map = {}
     try:
-        # 2. Load File
-        # Try different encodings
-        content = None
-        try:
-            df = pd.read_csv(file_path, sep='\t', encoding='gbk') # Try Typical THS Table.txt
-        except:
-            try:
-                df = pd.read_csv(file_path, sep='\t', encoding='utf-8')
-            except:
-                try: 
-                    df = pd.read_excel(file_path)
-                except:
-                    # Last resort: try comma sep
-                    try:
-                        df = pd.read_csv(file_path, encoding='gbk')
-                    except:
-                        return {}, f"{latest_file} (Read Fail)"
-
-        # 3. Parse Columns
-        # Need to find cols that contain "代码", "竞价金额", "竞价涨幅"
-        # Since column names might vary slightly, we search.
-        col_code = None
-        col_amt = None
-        col_pct = None
-        
-        for col in df.columns:
-            c_str = str(col).strip()
-            if "代码" in c_str: col_code = col
-            if "竞价金额" in c_str: col_amt = col
-            if "竞价涨幅" in c_str: col_pct = col
-            
-        if not col_code:
-            return {}, f"{latest_file} (No Code Col)"
-            
+        df = parse_call_auction_file(file_path)
+        if df is None or df.empty:
+             return {}, f"{filename} (Empty)"
+             
+        data_map = {}
         for _, row in df.iterrows():
-            try:
-                raw_code = str(row[col_code]).strip()
-                code = re.sub(r'\D', '', raw_code).zfill(6)
-                
-                amt = 0.0
-                if col_amt:
-                    try:
-                        val = row[col_amt]
-                        # Handle '亿', '万' if necessary, but table exports are usually raw numbers
-                        # If string, clean it
-                        if isinstance(val, str):
-                           val = val.replace(',', '').replace('亿', '*100000000').replace('万', '*10000')
-                           # simple eval safety check? nah, just float conversion usually
-                           # If it contains calculation chars, maybe eval, but let's assume direct number first
-                        amt = float(val)
-                    except: 
-                        pass
-                
-                pct = 0.0
-                if col_pct:
-                    try: pct = float(row[col_pct])
-                    except: pass
-                    
-                data_map[code] = {'amount': amt, 'pct': pct}
-            except:
-                continue
-                
-        return data_map, f"{latest_file} ({time_str})"
+            code = row['code']
+            # Shared utility returns 'auc_amt' (Wan), 'open_pct'
+            # Monitor expects 'amount' (Raw or Wan? See below)
+            # The monitor code previously did: 
+            # item['call_amt']/10000 in display. so item['call_amt'] should be raw value?
+            # Wait, let's check old code logic.
+            # Old code: if '万' in val -> parse -> e.g. 100万 -> 1000000. 
+            # Then main() does: int(item['call_amt']/10000). So main expects raw value.
+            # 
+            # Shared `parse_call_auction_file` returns `auc_amt` in *Wan* for large numbers?
+            # Let's check `parse_call_auction_file` implementation I just wrote.
+            # It says: if pure number -> float(raw)/10000.0 (Wait, pure number 4084080 -> 408.4 Wan)
+            # if '亿'/'万' -> eval/float -> e.g. 1.5亿 -> 15000 (Wan, via replace 亿 with *10000).
+            # So `parse_call_auction_file` returns unit in **Wan**.
+            #
+            # Old `intraday_monitor` logic:
+            #  val.replace('万', '*10000') -> This implies it wanted Raw Value.
+            #  And main() divides by 10000.
+            #
+            # So if shared utility returns Wan, I need to multiply by 10000 to get Raw Value for `intraday_monitor` compatibility.
+            
+            amt_wan = row['auc_amt']
+            pct = row['open_pct']
+            
+            data_map[code] = {'amount': amt_wan * 10000, 'pct': pct}
+            
+        return data_map, f"{filename} ({time_str})"
         
     except Exception as e:
         return {}, f"Error: {str(e)}"
@@ -386,7 +345,14 @@ def main():
              # call_ratio is just a ratio, not amount.
              pass
         
-        call_ratio = float(strat_info.get('call_auction_ratio', 0))
+        # Calculate Call Ratio dynamically if yesterday's amount is available
+        last_amt = float(strat_info.get('last_amount', 0))
+        if last_amt > 10000: # Valid amount
+             # call_amt_real is Raw Yuan. last_amt is Raw Yuan.
+             call_ratio = call_amt_real / last_amt
+        else:
+             # Fallback to static
+             call_ratio = float(strat_info.get('call_auction_ratio', 0))
 
         
         # Risk / Deviation
@@ -425,8 +391,8 @@ def main():
                 'dev_30': dev_30,
                 'dev_10': dev_10,
                 'risk_level': risk_level,
-                'call_amt': call_amt_real,
-                'call_pct': call_pct_real
+                'call_amt': call_amt_real if not pd.isna(call_amt_real) else 0.0,
+                'call_pct': call_pct_real if not pd.isna(call_pct_real) else 0.0
             })
 
             
@@ -443,7 +409,7 @@ def main():
 
     print(f"{Fore.YELLOW}🔥 领涨: {sector_summary} | 💰 资金: {inflow_str}{Style.RESET_ALL}")
     print("-" * 135)
-    print(f"{'代码':<8} {'名称':<8} {'涨幅%':<8} {'5分%':<7} {'现价':<8} {'乖离%':<7} {'成本/状态':<10} {'量比':<6} {'竞价':<5} {'竞价额':<8} {'竞价涨%':<7} {'信号/属性'}")
+    print(f"{'代码':<8} {'名称':<8} {'涨幅%':<8} {'5分%':<7} {'现价':<8} {'乖离%':<7} {'成本/状态':<10} {'量比':<6} {'竞价%':<5} {'竞价额':<8} {'竞价涨%':<7} {'信号/属性'}")
 
     print("-" * 135)
     
@@ -483,26 +449,13 @@ def main():
         if item['limit_type']:
             final_tag = f"[{item['limit_type']}] " + final_tag
             
-        # Highlight Call Ratio
+        # Highlight Call Ratio (Show as %)
         c_ratio = item['call_ratio']
-        ratio_str = f"{c_ratio:.1f}"
+        ratio_val_pct = c_ratio * 100
+        ratio_str = f"{ratio_val_pct:.1f}"
         if c_ratio > 0.1: ratio_str = f"{Fore.RED}{ratio_str}{Style.RESET_ALL}"
         
-        print(
-            f"{code_str:<16} " 
-            f"{item['name'][:4]:<8} "
-            f"{c_pct}{item['pct']:<8.2f}{Style.RESET_ALL} "
-            f"{c_speed}{s5:<7.2f}{Style.RESET_ALL} "
-            f"{item['price']:<8} "
-            f"{c_bias}{bias_val:<7.2f}{Style.RESET_ALL} "
-            f"{cost_str:<10} "
-            f"{item.get('vr', 0):<6.1f} "
-
-            f"{ratio_str:<14} " # Includes color codes which take length, pad strictly 
-            f"{int(item['call_amt']/10000):<8} " # Show in Wan
-            f"{item['call_pct']:<7.2f} "
-            f"{item['color']}{item['signal']} {Style.RESET_ALL}{risk_str}{final_tag[:20]}"
-        )
+        print(f"{code_str:<18} {item['name']:<9} {c_pct}{item['pct']:<9.2f}{Style.RESET_ALL} {c_speed}{item['speed5']:<8.2f}{Style.RESET_ALL} {item['price']:<9.2f} {c_bias}{item['bias']:<8.2f}{Style.RESET_ALL} {cost_str:<13} {item['vr']:<8.1f} {ratio_str:<6} {int(item['call_amt']):<8} {item['call_pct']:<8.2f} {item['color']}{item['signal']} {Style.RESET_ALL}{risk_str}{final_tag[:20]}")
         
     print("-" * 110)
     print("🚀 F-Guide: 持仓急拉卖T，急杀买T；断板及时离场。")

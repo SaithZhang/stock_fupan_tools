@@ -642,11 +642,14 @@ def generate_strategy_pool():
             final_tag_str = final_tag_str.replace("🔥断板反包", "🔥A大焚诀") 
             # If explicit "🔥A大焚诀" from model, it will be kept. 
             
+                # If explicit "🔥A大焚诀" from model, it will be kept. 
+            
             row = {
                 'sina_code': format_sina(code),
                 'name': name,
                 'tag': final_tag_str,
                 'amount': item.get('amount', 0),
+                'last_amount': yest_item.get('amount', 0) if yest_item else 0, # Export Yesterday's Amount
                 'today_pct': pct,
                 'turnover': item.get('turnover', 0),
                 'open_pct': item.get('open_pct', 0),
@@ -747,7 +750,7 @@ def generate_strategy_pool():
 
         cols = ['sina_code', 'name', 'tag', 'amount', 'today_pct', 'turnover', 'open_pct', 'price', 
                 'risk_level', 'risk_msg', 'trigger_next', 'risk_rule', 'deviation_val_10d', 'deviation_val_30d',
-                'call_auction_ratio', 'limit_up_type',  # New Cols
+                'call_auction_ratio', 'last_amount', 'limit_up_type',  # New Cols
                 'pct_10', 'link_dragon', 'vol', 'vol_prev', 'vol_ratio', 'code']
         for c in cols:
             if c not in df.columns: df[c] = 0

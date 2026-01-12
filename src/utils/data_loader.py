@@ -283,3 +283,139 @@ def load_history_basics():
         pass
         
     return info
+
+def get_latest_call_auction_file():
+    """
+    Get the latest call auction file from data/input/call_auction/
+    Returns: file_path (str) or None
+    """
+    base_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'call_auction')
+    if not os.path.exists(base_dir): return None
+    
+    files = [f for f in os.listdir(base_dir) if f.lower().endswith(('.txt', '.csv', '.xls', '.xlsx'))]
+    if not files: return None
+    
+    # Sort by mtime
+    files.sort(key=lambda x: os.path.getmtime(os.path.join(base_dir, x)), reverse=True)
+    return os.path.join(base_dir, files[0])
+
+def parse_call_auction_file(file_path):
+    """
+    Parse a call auction export file (txt/csv/excel) using Pandas for robustness.
+    Returns: DataFrame with columns ['code', 'name', 'auc_amt', 'open_pct'] or None
+    """
+    if not os.path.exists(file_path): return None
+
+    df = None
+    # Prioritize Separators: Tab (THS default), then whitespace
+    separators = [r'\t+', r'\s+'] 
+    encodings = ['gbk', 'utf-16', 'utf-8']
+    
+    for enc in encodings:
+        for sep in separators:
+            try:
+                # Read with flexible separator and engine
+                temp_df = pd.read_csv(file_path, sep=sep, engine='python', encoding=enc, dtype=str)
+                # Cleanup column names
+                temp_df.columns = [str(c).strip() for c in temp_df.columns]
+                
+                if any("代码" in c for c in temp_df.columns) and len(temp_df) > 0:
+                    df = temp_df
+                    break
+            except:
+                continue
+        if df is not None: break
+        
+    if df is None:
+        print(f"❌ 无法解析文件: {file_path}")
+        return None
+
+    # Map Columns
+    cols = df.columns
+    col_code = next((c for c in cols if "代码" in c), None)
+    col_name = next((c for c in cols if "名称" in c), None)
+    
+    # Priority: Call Auction > Open > Amount
+    col_amt = next((c for c in cols if "早盘竞价金额" in c), None)
+    if not col_amt: col_amt = next((c for c in cols if "竞价金额" in c or "竞价额" in c), None)
+    if not col_amt: col_amt = next((c for c in cols if "金额" in c or "竞价" in c), None)
+    
+    # Yesterday Amount (Optional)
+    col_last_amt = next((c for c in cols if "昨日成交额" in c or "昨成交" in c), None)
+    
+    # Priority: Call Pct > Open Pct > Pct
+    col_pct = next((c for c in cols if "竞价涨幅" in c), None)
+    if not col_pct: col_pct = next((c for c in cols if "开盘涨幅" in c), None)
+    if not col_pct: col_pct = next((c for c in cols if "涨幅" in c), None)
+
+    if not col_code or not col_amt:
+        print(f"❌ 关键列缺失: Code={col_code}, Amt={col_amt}, Pct={col_pct}")
+        return None
+
+    res_map = {}
+    
+    for _, row in df.iterrows():
+        try:
+            # Code
+            raw_code = str(row[col_code])
+            code = re.sub(r"\D", "", raw_code).zfill(6)
+            
+            # Name
+            name = str(row[col_name]).strip() if col_name else "未知"
+            
+            # Amt
+            raw_amt = str(row[col_amt])
+            auc_val = 0.0
+            
+            # Handle "1.23亿", "500万", or raw large numbers
+            if '亿' in raw_amt:
+                auc_val = float(raw_amt.replace('亿', '')) * 10000
+            elif '万' in raw_amt:
+                auc_val = float(raw_amt.replace('万', ''))
+            elif raw_amt.replace('.','').replace('-','').isdigit():
+                val = float(raw_amt)
+                # Heuristic: If value > 1 Million, assume it's raw Unit (Yuan), convert to Wan
+                # If value < 100000, maybe it's already Wan? 
+                # THS usually exports Raw Yuan for "早盘竞价金额" (e.g. 4084080)
+                if val > 10000: 
+                    auc_val = val / 10000.0
+                else: 
+                    # Ambiguous case: 5000 could be 5000 Yuan or 5000 Wan. 
+                    # Assume Yuan for consistency with THS raw exports.
+                    auc_val = val / 10000.0
+            
+            # Pct
+            pct_val = 0.0
+            if col_pct:
+                try:
+                    pct_str = str(row[col_pct]).replace('%', '').replace('+', '')
+                    pct_val = float(pct_str)
+                except: pct_val = 0.0
+                
+            # Yesterday Amount
+            last_amt = 0.0
+            if col_last_amt:
+                try:
+                    r_last = str(row[col_last_amt])
+                    if '亿' in r_last:
+                        last_amt = float(r_last.replace('亿', '')) * 10000
+                    elif '万' in r_last:
+                        last_amt = float(r_last.replace('万', ''))
+                    elif r_last.replace('.','').isdigit():
+                        val = float(r_last)
+                        if val > 10000: last_amt = val / 10000.0
+                        else: last_amt = val / 10000.0 # assume yuan
+                except: pass
+
+            res_map[code] = {
+                'code': code,
+                'name': name,
+                'auc_amt': auc_val, # Unit: Wan
+                'open_pct': pct_val,
+                'last_amt': last_amt # Unit: Wan
+            }
+        except: continue
+        
+    if res_map:
+        return pd.DataFrame(list(res_map.values()))
+    return None
