@@ -109,24 +109,12 @@ def get_sector_map():
 
 
 # ================= 2. 获取实时数据 (Akshare + 本地文件优先) =================
-def load_call_auction_data_from_file():
+def parse_call_auction_file(file_path):
     """
-    尝试从 data/input/call_auction/ 读取最新的同花顺导出文件
-    使用手动行解析模式，以最大程度兼容 '复制粘贴' 产生的混乱分隔符
+    独立的文件解析逻辑，便于单元测试
     """
-    base_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'call_auction')
-    if not os.path.exists(base_dir): return None
-    
-    files = [f for f in os.listdir(base_dir) if f.lower().endswith(('.txt', '.csv', '.xls', '.xlsx'))]
-    if not files: return None
-    
-    # Sort by mtime
-    files.sort(key=lambda x: os.path.getmtime(os.path.join(base_dir, x)), reverse=True)
-    latest_file = files[0]
-    file_path = os.path.join(base_dir, latest_file)
-    
-    print(f"{Fore.CYAN}📂 [2A/3] 检测到本地竞价文件: {latest_file}，优先加载...{Style.RESET_ALL}")
-    
+    if not os.path.exists(file_path): return None
+
     # 1. Read Content
     content = ""
     try:
@@ -134,8 +122,8 @@ def load_call_auction_data_from_file():
     except:
         try:
             with open(file_path, 'r', encoding='gbk') as f: content = f.read()
-        except Exception as e:
-            print(f"{Fore.RED}❌ 无法读取文件: {e}{Style.RESET_ALL}")
+        except:
+            print(f"{Fore.RED}❌ 无法读取文件: {file_path}{Style.RESET_ALL}")
             return None
             
     lines = [line.strip() for line in content.split('\n') if line.strip()]
@@ -143,10 +131,10 @@ def load_call_auction_data_from_file():
     # 2. Find Header
     header_idx = -1
     header_parts = []
-    for i, line in enumerate(lines[:20]): # Scan first 20 lines
+    for i, line in enumerate(lines[:20]):
         if "代码" in line and ("名称" in line or "涨幅" in line):
             header_idx = i
-            header_parts = line.split() # Split by ANY whitespace
+            header_parts = line.split()
             break
             
     if header_idx == -1: 
@@ -187,7 +175,7 @@ def load_call_auction_data_from_file():
             return float(s)
         except: return 0.0
 
-    print(f"正在解析数据，表头长度: {len(header_parts)}")
+    # print(f"正在解析数据，表头长度: {len(header_parts)}")
     
     for line in lines[header_idx+1:]:
         parts = line.split()
@@ -195,14 +183,11 @@ def load_call_auction_data_from_file():
         
         try:
             # Code
-            raw_code = parts[idx_code]
-            code = re.sub(r"\D", "", raw_code).zfill(6)
+            code = re.sub(r"\D", "", parts[idx_code]).zfill(6)
             
             # Name
-            name = "未知"
-            if idx_name != -1 and len(parts) > idx_name:
-                name = parts[idx_name]
-                
+            name = parts[idx_name] if (idx_name != -1 and len(parts) > idx_name) else "未知"
+            
             # Amt
             raw_amt = parts[idx_amt]
             # Smart fix: if parts split incorrectly due to spaces in name?
@@ -224,9 +209,8 @@ def load_call_auction_data_from_file():
             # Pct
             pct_val = 0.0
             if idx_pct != -1 and len(parts) > idx_pct:
-                raw_pct = parts[idx_pct]
                 try:
-                    pct_val = float(str(raw_pct).replace('%', '').replace('+', ''))
+                    pct_val = float(str(parts[idx_pct]).replace('%', '').replace('+', ''))
                 except: pass
             
             res_map[code] = {
@@ -236,10 +220,33 @@ def load_call_auction_data_from_file():
                 'open_pct': pct_val
             }
         except: continue
-
+            
     if res_map:
-        print(f"✅ 从本地文件加载了 {len(res_map)} 条竞价数据")
-        return pd.DataFrame(res_map.values())
+        return pd.DataFrame(list(res_map.values()))
+    return None
+
+def load_call_auction_data_from_file():
+    """
+    尝试从 data/input/call_auction/ 读取最新的同花顺导出文件
+    使用手动行解析模式，以最大程度兼容 '复制粘贴' 产生的混乱分隔符
+    """
+    base_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'call_auction')
+    if not os.path.exists(base_dir): return None
+    
+    files = [f for f in os.listdir(base_dir) if f.lower().endswith(('.txt', '.csv', '.xls', '.xlsx'))]
+    if not files: return None
+    
+    # Sort by mtime
+    files.sort(key=lambda x: os.path.getmtime(os.path.join(base_dir, x)), reverse=True)
+    latest_file = files[0]
+    file_path = os.path.join(base_dir, latest_file)
+    
+    print(f"{Fore.CYAN}📂 [2A/3] 检测到本地竞价文件: {latest_file}，优先加载...{Style.RESET_ALL}")
+    
+    df = parse_call_auction_file(file_path)
+    if df is not None and not df.empty:
+        print(f"✅ 从本地文件加载了 {len(df)} 条竞价数据")
+        return df
         
     return None
 
