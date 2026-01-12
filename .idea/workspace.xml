@@ -7,17 +7,11 @@
     <list default="true" id="7f3e5001-998e-49af-adfe-f0b60b419f26" name="Changes" comment="拆分重构">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/data/input/call_auction/Table_20260112_155115.txt" beforeDir="false" afterPath="$PROJECT_DIR$/data/input/call_auction/Table_20260112_155115.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/input/f_lao_list.txt" beforeDir="false" afterPath="$PROJECT_DIR$/data/input/f_lao_list.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/input/holdings.txt" beforeDir="false" afterPath="$PROJECT_DIR$/data/input/holdings.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data/input/dapan/dapan-20260110.txt" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/data/input/ths/Table-20260112.txt" beforeDir="false" afterPath="$PROJECT_DIR$/data/input/ths/Table-20260112.txt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/output/lhb/lhb_famous_latest.csv" beforeDir="false" afterPath="$PROJECT_DIR$/data/output/lhb/lhb_famous_latest.csv" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/output/lhb/lhb_latest.csv" beforeDir="false" afterPath="$PROJECT_DIR$/data/output/lhb/lhb_latest.csv" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/output/strategy_pool.csv" beforeDir="false" afterPath="$PROJECT_DIR$/data/output/strategy_pool.csv" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/data_loader.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/data_loader.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/market_data.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/market_data.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/core/pool_generator.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/core/pool_generator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data/input/ths/concepts/concept-20260110.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/data/input/ths/indices/indices.-20260110.txt" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/src/monitors/call_auction_screener.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/monitors/call_auction_screener.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/monitors/intraday_monitor.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/monitors/intraday_monitor.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/utils/data_loader.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/data_loader.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -388,7 +382,7 @@
       <workItem from="1767919900493" duration="10631000" />
       <workItem from="1768050694314" duration="429000" />
       <workItem from="1768141291050" duration="2203000" />
-      <workItem from="1768175796086" duration="25505000" />
+      <workItem from="1768175796086" duration="26642000" />
     </task>
     <task id="LOCAL-00001" summary="init">
       <option name="closed" value="true" />

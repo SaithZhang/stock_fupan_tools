@@ -309,7 +309,8 @@ def parse_call_auction_file(file_path):
     df = None
     # Prioritize Separators: Tab (THS default), then whitespace
     separators = [r'\t+', r'\s+'] 
-    encodings = ['gbk', 'utf-16', 'utf-8']
+    # Prioritize utf-8 for robust parsing of modern exports, fallback to gbk/utf-16
+    encodings = ['utf-8', 'gbk', 'utf-16']
     
     for enc in encodings:
         for sep in separators:
@@ -404,7 +405,6 @@ def parse_call_auction_file(file_path):
                     elif r_last.replace('.','').isdigit():
                         val = float(r_last)
                         if val > 10000: last_amt = val / 10000.0
-                        else: last_amt = val / 10000.0 # assume yuan
                 except: pass
 
             res_map[code] = {

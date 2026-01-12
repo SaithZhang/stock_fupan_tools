@@ -231,21 +231,42 @@ def analyze_stock(row, history_info, pool_map, phase, sector_map=None):
 
     # 1. 获取实时数据
     try:
-        open_pct = float(row['open_pct'])
-        auc_amt = float(row['auc_amt'])  # 竞价金额 (万)
+        open_pct = float(row.get('open_pct', 0))
+        auc_amt = float(row.get('auc_amt', 0))  # 竞价金额 (万)
         
-        # [Fix] Use last_amt from local file if available, else from history
+        # --- 🚨 修复开始：强力读取昨日成交额 ---
         last_amt = float(row.get('last_amt', 0))
-    except:
+        
+        # 如果 last_amt 是 0，尝试直接读中文列名并解析单位
+        if last_amt == 0:
+            # 兼容可能的中文列名
+            raw_yest = row.get('昨日成交额', row.get('昨成交', '0'))
+            raw_str = str(raw_yest).strip()
+            
+            if '亿' in raw_str:
+                last_amt = float(raw_str.replace('亿', '')) * 100000000
+            elif '万' in raw_str:
+                last_amt = float(raw_str.replace('万', '')) * 10000
+            else:
+                try:
+                    last_amt = float(raw_str)
+                except:
+                    last_amt = 0
+        # --- 🚨 修复结束 ---
+
+    except Exception as e:
+        # 如果出错，打印一下是什么错
+        print(f"数据解析错误 [{code}]: {e}")
         return None
 
     # 2. 获取历史数据
     if code not in history_info: return None
     info = history_info[code]
 
-    # Pre-market data might not have last_amt if not explicitly added
-    if last_amt == 0:
-        last_amt = info.get('yest_amt', 0) # Could be Yuan
+    # [Fix] User request: Do NOT fallback to 'yest_amt' from Table.txt (which is Today's turnover if post-market)
+    # Only use 'last_amt' if explicitly provided in the Call Auction file.
+    # if last_amt == 0:
+    #     last_amt = info.get('yest_amt', 0) 
         
     circ_mv = info['circ_mv'] # Could be Yuan
     
@@ -301,9 +322,19 @@ def analyze_stock(row, history_info, pool_map, phase, sector_map=None):
         score = 0
         if code in pool_map: score = 90
         return {
-            'code': code, 'name': name, 'score': score, 'decision': f"{Fore.BLUE}一字板{Style.RESET_ALL}",
-            'open_pct': open_pct, 'auc': auc_amt, 'yest_pct': yest_pct, 'boards': boards,
-            'r_mv': ratio_mv, 'circ_mv': circ_mv, 'sector_info': sector_display
+            'code': code, 
+            'name': name, 
+            'score': score, 
+            'decision': f"{Fore.BLUE}一字板{Style.RESET_ALL}",
+            'open_pct': open_pct, 
+            'auc': auc_amt, 
+            'yest_pct': yest_pct, 
+            'boards': boards,
+            'r_mv': ratio_mv, 
+            'circ_mv': circ_mv, 
+            'sector_info': sector_display,
+            'last_amt': last_amt,   # <--- ✅ 加上这行，把昨成交额传出去
+            'r_yest': ratio_yest    # <--- ✅ 建议顺便加上这个，保持数据完整
         }
 
     # --- [新增] DDD 策略兼容 ---
