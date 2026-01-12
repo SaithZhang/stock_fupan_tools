@@ -112,7 +112,7 @@ def get_sector_map():
 def load_call_auction_data_from_file():
     """
     尝试从 data/input/call_auction/ 读取最新的同花顺导出文件
-    返回: DataFrame (columns: code, name, auc_amt, open_pct) 或 None
+    使用手动行解析模式，以最大程度兼容 '复制粘贴' 产生的混乱分隔符
     """
     base_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'call_auction')
     if not os.path.exists(base_dir): return None
@@ -127,66 +127,119 @@ def load_call_auction_data_from_file():
     
     print(f"{Fore.CYAN}📂 [2A/3] 检测到本地竞价文件: {latest_file}，优先加载...{Style.RESET_ALL}")
     
+    # 1. Read Content
+    content = ""
     try:
-        # Load File (Copy logic from intraday_monitor)
+        with open(file_path, 'r', encoding='utf-8') as f: content = f.read()
+    except:
         try:
-             df = pd.read_csv(file_path, sep='\t', encoding='gbk')
-        except:
-             try: df = pd.read_csv(file_path, sep='\t', encoding='utf-8')
-             except: 
-                 try: df = pd.read_excel(file_path)
-                 except: 
-                     try: df = pd.read_csv(file_path, encoding='gbk')
-                     except: return None
+            with open(file_path, 'r', encoding='gbk') as f: content = f.read()
+        except Exception as e:
+            print(f"{Fore.RED}❌ 无法读取文件: {e}{Style.RESET_ALL}")
+            return None
+            
+    lines = [line.strip() for line in content.split('\n') if line.strip()]
+    
+    # 2. Find Header
+    header_idx = -1
+    header_parts = []
+    for i, line in enumerate(lines[:20]): # Scan first 20 lines
+        if "代码" in line and ("名称" in line or "涨幅" in line):
+            header_idx = i
+            header_parts = line.split() # Split by ANY whitespace
+            break
+            
+    if header_idx == -1: 
+        print(f"{Fore.RED}❌ 未找到表头行 (需包含 '代码'){Style.RESET_ALL}")
+        return None
+
+    # 3. Map Columns
+    idx_code = -1
+    idx_name = -1
+    idx_amt = -1
+    idx_pct = -1
+    
+    for i, h in enumerate(header_parts):
+        if "代码" in h: idx_code = i
+        if "名称" in h: idx_name = i
+        if h in ["竞价金额", "竞价额", "早盘竞价金额"]: idx_amt = i
+        if h in ["竞价涨幅", "竞价涨幅%"]: idx_pct = i
         
-        # Parse Cols
-        col_code, col_name, col_amt, col_pct = None, None, None, None
-        for col in df.columns:
-            c = str(col).strip()
-            if "代码" in c: col_code = col
-            if "名称" in c: col_name = col
-            if "竞价金额" in c: col_amt = col
-            if "竞价涨幅" in c: col_pct = col
+    # Lazy Match for amount/pct if not precise
+    if idx_amt == -1:
+        for i, h in enumerate(header_parts):
+            if "竞价金额" in h: idx_amt = i; break
             
-        if not col_code: return None
+    if idx_code == -1 or idx_amt == -1:
+        print(f"{Fore.RED}❌ 缺少关键列: CodeIdx={idx_code}, AmtIdx={idx_amt}{Style.RESET_ALL}")
+        print(f"Header: {header_parts}")
+        return None
+
+    # 4. Parse Rows
+    res_map = {}
+    
+    # Helper: Parse Wan/Yi
+    def parse_wan(x):
+        try:
+            if not x or x == '--': return 0.0
+            s = str(x).replace('亿', '*10000').replace('万', '').replace(' ', '').replace(',', '')
+            if '亿' in str(x): return eval(s)
+            return float(s)
+        except: return 0.0
+
+    print(f"正在解析数据，表头长度: {len(header_parts)}")
+    
+    for line in lines[header_idx+1:]:
+        parts = line.split()
+        if len(parts) < max(idx_code, idx_amt) + 1: continue
         
-        data_list = []
-        for _, row in df.iterrows():
-            try:
-                raw_code = str(row[col_code]).strip()
-                code = re.sub(r'\D', '', raw_code).zfill(6)
-                name = str(row[col_name]) if col_name else ""
-                
-                amt = 0.0
-                if col_amt:
-                    val = row[col_amt]
-                    if isinstance(val, str):
-                        val = val.replace(',', '').replace('亿', '*100000000').replace('万', '*10000')
-                    try: amt = float(val)
-                    except: pass
-                    
-                pct = 0.0
-                if col_pct:
-                    try: pct = float(row[col_pct])
-                    except: pass
-                
-                # Only valid amount
-                if amt > 0:
-                    data_list.append({
-                        'code': code,
-                        'name': name,
-                        'auc_amt': amt,
-                        'open_pct': pct,
-                        'current_price': 0 # Not available in simple export usually
-                    })
-            except: continue
+        try:
+            # Code
+            raw_code = parts[idx_code]
+            code = re.sub(r"\D", "", raw_code).zfill(6)
             
-        if data_list:
-            print(f"✅ 从本地文件加载了 {len(data_list)} 条竞价数据")
-            return pd.DataFrame(data_list)
+            # Name
+            name = "未知"
+            if idx_name != -1 and len(parts) > idx_name:
+                name = parts[idx_name]
+                
+            # Amt
+            raw_amt = parts[idx_amt]
+            # Smart fix: if parts split incorrectly due to spaces in name?
+            # Usually stock names don't have spaces.
             
-    except Exception as e:
-        print(f"⚠️ 本地文件读取出错: {e}，将回退到 Akshare")
+            auc_val = 0.0
+            # If raw_amt is a large integer string "4084080" -> it is Yuan.
+            # If it is "1.5亿" -> parse_wan -> 15000 Wan.
+            
+            if raw_amt.replace('.','').isdigit():
+                 # Pure number, assume Yuan if > 100000? 
+                 # Or verify unit.
+                 # User data: 4084080. This is 408 Wan.
+                 # So pure number = Yuan.
+                 auc_val = float(raw_amt) / 10000.0
+            else:
+                 auc_val = parse_wan(raw_amt)
+                 
+            # Pct
+            pct_val = 0.0
+            if idx_pct != -1 and len(parts) > idx_pct:
+                raw_pct = parts[idx_pct]
+                try:
+                    pct_val = float(str(raw_pct).replace('%', '').replace('+', ''))
+                except: pass
+            
+            res_map[code] = {
+                'code': code,
+                'name': name,
+                'auc_amt': auc_val,
+                'open_pct': pct_val
+            }
+        except: continue
+
+    if res_map:
+        print(f"✅ 从本地文件加载了 {len(res_map)} 条竞价数据")
+        return pd.DataFrame(res_map.values())
         
     return None
 
@@ -363,6 +416,10 @@ def analyze_stock(row, history_info, pool_map, phase, sector_map=None):
         if is_sector_hot:
             score += 5
             decision += " 共振"
+
+        # Append DDD detail info
+        decision += f" [{ddd_tag}]"
+
 
         return {
             'code': code, 'name': name, 'score': score, 'decision': decision,

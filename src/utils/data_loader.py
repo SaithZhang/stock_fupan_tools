@@ -204,31 +204,82 @@ def load_pool_full():
     return pool
 
 def load_history_basics():
-    """加载昨收价，用于计算涨跌停价"""
+    """
+    加载历史数据基础信息 (昨收, 行业, 市值等)
+    返回: {code: {'name': str, 'industry': str, 'close': float, 'mcap': float}}
+    """
     path = get_latest_history_path()
     info = {}
     if not os.path.exists(path): return info
     
     try:
-        # 尝试读取
+        # Load File with robust strategy
+        df = None
+        # 1. Regex + UTF-8 (Prioritize for copied text)
         try:
-            with open(path, 'r', encoding='gbk') as f: content = f.read()
-        except:
-            with open(path, 'r', encoding='utf-8') as f: content = f.read()
+             df = pd.read_csv(path, sep=r'\s+', encoding='utf-8', on_bad_lines='skip')
+             cols = [str(c) for c in df.columns]
+             if not any("代码" in c for c in cols): df = None
+        except: pass
+
+        # 2. Regex + GBK
+        if df is None:
+            try:
+                df = pd.read_csv(path, sep=r'\s+', encoding='gbk', on_bad_lines='skip')
+            except: pass
+
+        # 3. Fallback
+        if df is None:
+             try: df = pd.read_csv(path, sep='\t', encoding='gbk')
+             except: return info
+        
+        # Parse Cols
+        col_code, col_name, col_ind, col_close, col_mcap = None, None, None, None, None
+        
+        for col in df.columns:
+            c = str(col).strip()
+            if "代码" in c: col_code = col
+            if "名称" in c: col_name = col
+            if "行业" in c: col_ind = col
+            if "现价" in c or "收盘" in c: col_close = col
+            if "流通市值" in c: col_mcap = col
             
-        lines = content.split('\n')
-        # 简单解析: 代码, 名称, 现价(昨收)
-        # 假设 Table.txt 是同花顺导出，列比较多，这里简化查找
-        for line in lines:
-            if not line.strip(): continue
-            parts = line.split()
-            if len(parts) < 3: continue
-            # 只有数字开头的行才可能是股票
-            if parts[0].isdigit() and len(parts[0]) == 6:
-                code = parts[0]
-                # 寻找价格列，通常在第 2 或 3 列之后
-                # 这是一个hacky方法，实际上 akshare 实时数据会带昨收，这里主要为了拿名字备用
-                info[code] = {'name': parts[1]}
-    except:
+        if not col_code: return info
+        
+        # Clean Code
+        df[col_code] = df[col_code].astype(str).str.zfill(6)
+        
+        for _, row in df.iterrows():
+            try:
+                code = row[col_code]
+                if not code.isdigit():
+                    code = re.sub(r"\D", "", code).zfill(6)
+                
+                name = str(row[col_name]).strip() if col_name else '未知'
+                industry = str(row[col_ind]).strip() if col_ind else '未知'
+                
+                close = 0.0
+                if col_close:
+                    try: close = float(row[col_close])
+                    except: pass
+                    
+                mcap = 0.0
+                if col_mcap:
+                    try: 
+                        val_str = str(row[col_mcap]).replace('亿', '*100000000').replace('万', '*10000')
+                        mcap = eval(val_str)
+                    except: pass
+
+                info[code] = {
+                    'name': name,
+                    'industry': industry,
+                    'close': close,
+                    'mcap': mcap
+                }
+            except: continue
+            
+    except Exception as e:
+        print(f"基础数据加载失败: {e}")
         pass
+        
     return info
