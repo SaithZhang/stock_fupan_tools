@@ -478,8 +478,8 @@ def generate_strategy_pool():
         zt_tag = ""
         if is_zt:
             has_zt_status = True
-            limit_days = item.get('limit_days', 0)
-            zt_tag = f"{limit_days}板" if limit_days > 0 else "首板"
+            limit_days = item.get('limit_days', 0) + 1
+            zt_tag = f"{limit_days}板" if limit_days > 1 else "首板"
             open_num = item.get('open_num', 0)
             if open_num > 0:
                 zt_tag += f"/回封(炸{open_num}次)"
