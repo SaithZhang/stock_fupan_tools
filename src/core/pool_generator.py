@@ -1,6 +1,7 @@
 # ==============================================================================
 # 📌 策略池生成器 (src/core/pool_generator.py) - 【盘后运行】
-# Version: 1.1 | Last Modified: 2026-01-11
+# Version: 1.2 | Last Modified: 2026-01-13
+# Update: 集成筹码结构分析 (Chip Analysis)
 # ==============================================================================
 import pandas as pd
 import os
@@ -34,6 +35,18 @@ init(autoreset=True)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(current_dir))
 sys.path.append(PROJECT_ROOT) # Fix import src issue
+
+# --- 导入筹码分析模块 ---
+# 假设 chip_analyzer.py 放在 src/tools/ 下
+try:
+    sys.path.append(os.path.join(PROJECT_ROOT, 'src')) 
+    from tools.chip_analyzer import get_chip_metrics, generate_chip_tag
+    print(f"{Fore.GREEN}✅ 筹码分析模块加载成功")
+except ImportError as e:
+    print(f"{Fore.YELLOW}⚠️ 筹码分析模块加载失败: {e} (将跳过筹码分析)")
+    # 定义空函数防止报错
+    def get_chip_metrics(*args): return None
+    def generate_chip_tag(*args): return ""
 
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'data', 'output')
 ARCHIVE_DIR = os.path.join(OUTPUT_DIR, 'archive')
@@ -446,6 +459,7 @@ def generate_strategy_pool():
         code = str(item['code'])
         name = item['name']
         pct = item.get('today_pct', 0)
+        is_holding = (code in holdings_map) # 标记是否为持仓
 
         raw_tag_str = str(item.get('tag', ''))
         if 'nan' in raw_tag_str: raw_tag_str = ""
@@ -590,6 +604,23 @@ def generate_strategy_pool():
         amount_yi = item.get('amount', 0) / 100000000.0
         if amount_yi > 20.0 and pct > 0:
             is_selected = True
+
+        # --- 🔴 新增：筹码与做T分析 (仅对持仓或高关注度标的) ---
+        # 触发条件：是持仓股 OR 是昨日炸板关注股 OR 是人气高标
+        should_analyze_chips = is_holding or (code in broken_pool_map) or (item.get('limit_days', 0) >= 3)
+        
+        if is_selected and should_analyze_chips:
+            print(f"   🔎 分析筹码: {name} ({code}) ...", end="")
+            chip_metrics = get_chip_metrics(code)
+            if chip_metrics:
+                chip_tag = generate_chip_tag(chip_metrics)
+                if chip_tag:
+                    base_tags.append(chip_tag) # 直接追加到 tag 列表
+                    print(f" {Fore.YELLOW}Tags: {chip_tag}")
+                else:
+                    print(" (无显著特征)")
+            else:
+                print(" (数据获取失败)")
 
         # --- 4. 最终合并 ---
         if is_selected:
