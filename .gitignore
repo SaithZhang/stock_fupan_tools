@@ -16,7 +16,10 @@ data/output/
 
 # User Inputs
 holdings.txt
+manual_focus.txt
 ths_clipboard.txt
+data/input/**/*.txt
+data/input/call_auction/
 
 # Browser Data
 user_data/
