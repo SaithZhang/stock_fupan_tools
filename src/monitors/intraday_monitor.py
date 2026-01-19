@@ -216,6 +216,25 @@ def main():
     sector_summary = get_market_mood()
     current_time = datetime.datetime.now().strftime('%H:%M:%S')
 
+    # ================= ✨ 新增：全市场情绪扫描 ✨ =================
+    # 计算涨跌停家数 (粗略估算：涨幅>9.8% 和 跌幅<-9.8%)
+    limit_up_count = len(df[df['涨跌幅'] > 9.8])
+    limit_down_count = len(df[df['涨跌幅'] < -9.8])
+
+    # 计算市场中位数 (代表平均赚钱效应)
+    median_pct = df['涨跌幅'].median()
+
+    # 定义情绪温度计
+    if limit_down_count > limit_up_count:
+        mood_style = Back.BLUE + Fore.WHITE + " 🥶 冰点退潮 "
+    elif limit_up_count > 100:
+        mood_style = Back.RED + Fore.YELLOW + " 🔥 情绪高潮 "
+    else:
+        mood_style = Back.BLACK + Fore.WHITE + " ⚖️ 震荡市 "
+
+    mood_str = f"{mood_style} 涨停: {limit_up_count} 家 | 跌停: {limit_down_count} 家 | 中位数: {median_pct:.2f}% {Style.RESET_ALL}"
+    # ==========================================================
+
     # 5. 筛选与计算
     df_target = df[df['代码'].isin(monitor_list)].copy()
     display_list = []
@@ -267,6 +286,9 @@ def main():
     idx_color = Fore.RED if idx_info['pct'] > 0 else Fore.GREEN
     header = f"上证: {idx_color}{idx_info['price']} ({idx_info['pct']}%) {Style.RESET_ALL} | 量比: {idx_info['sh_vr']} | 成交: {total_amt_str}"
     print(f"\n{Back.BLUE}{Fore.WHITE} {current_time} {Style.RESET_ALL} | {header} | 竞价源: {call_source_info}")
+    # 新增这一行打印
+    print(mood_str)
+
     print(f"{Fore.YELLOW}🔥 领涨: {sector_summary}{Style.RESET_ALL}")
 
     print("-" * 120)
