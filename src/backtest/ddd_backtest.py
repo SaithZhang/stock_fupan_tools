@@ -1,6 +1,6 @@
 # ==============================================================================
 # 🛠️ DDD 策略离线回测脚本 (src/backtest/ddd_backtest.py)
-# 作用: 使用本地同花顺数据 (T日竞价 + T-1日历史) 回测 DDD 策略的胜率
+# Version: 1.7 | 完美闭环版: 自动优先读取 _fixed 修复数据 + 强力搜救
 # ==============================================================================
 import os
 import sys
@@ -8,246 +8,213 @@ import pandas as pd
 import re
 from colorama import init, Fore, Style
 
-# 添加项目根目录到路径，以便导入 strategies
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 sys.path.append(project_root)
 
-from src.strategies.ddd_mode import calculate_ddd_realtime
+try:
+    from src.strategies.ddd_mode import calculate_ddd_realtime
+except ImportError:
+    print(f"{Fore.RED}❌ 无法导入 src/strategies/ddd_mode.py")
+    sys.exit(1)
 
 init(autoreset=True)
-
-# --- 配置 ---
 DATA_DIR = os.path.join(project_root, 'data', 'input', 'ths')
 
-# 自动寻找最新的两个文件
-def get_test_files():
-    files = [f for f in os.listdir(DATA_DIR) if f.startswith('Table') and f.endswith('.txt')]
-    # 提取日期
-    file_map = []
-    for f in files:
-        m = re.search(r'[-_]?(\d{8})', f)
-        if m:
-            file_map.append({'path': os.path.join(DATA_DIR, f), 'date': int(m.group(1))})
-    
-    # 按日期排序 (从大到小)
-    file_map.sort(key=lambda x: x['date'], reverse=True)
-    
-    if len(file_map) < 2:
-        print(f"{Fore.RED}❌ 数据文件不足，至少需要2天的数据 (T 和 T-1)")
-        return None, None
-        
-    return file_map[0], file_map[1]
+# 🔥 调试目标
+TARGET_DEBUG_CODES = ['601616', '601133'] 
 
-# --- 数据解析 helper (简化版) ---
+def parse_val(v):
+    if pd.isna(v): return 0.0
+    s = str(v).strip().replace('%', '').replace(',', '')
+    if s in ['--', 'nan', '', 'None']: return 0.0
+    unit = 1.0
+    if '亿' in s: unit = 100000000.0; s = s.replace('亿', '')
+    elif '万' in s: unit = 10000.0; s = s.replace('万', '')
+    try: return float(s) * unit
+    except: return 0.0
+
+def parse_boards(v):
+    s = str(v).strip()
+    if '首板' in s: return 1
+    nums = re.findall(r'\d+', s)
+    if not nums: return 0
+    val = int(nums[-1])
+    return 0 if val > 100 else val
+
 def parse_ths_file(filepath):
-    print(f"   📖 解析文件: {os.path.basename(filepath)} ...")
+    print(f"📖 读取: {os.path.basename(filepath)}")
     try:
-        # 尝试多种编码
         df = None
-        for enc in ['gbk', 'utf-8', 'utf-16']:
+        for enc in ['gbk', 'utf-16', 'utf-8', 'gb18030']:
             try:
                 df = pd.read_csv(filepath, sep=r'\t+', engine='python', encoding=enc, dtype=str)
-                if '代码' in df.columns or ' 名称' in df.columns:
-                    break
-            except:
-                continue
-                
-        if df is None: return {}
+                if len(df.columns) <= 1: df = pd.read_csv(filepath, sep=',', engine='python', encoding=enc, dtype=str)
+                if any(k in str(list(df.columns)) for k in ['代码', 'Code']): break
+            except: continue
         
+        if df is None: return {}
         df.columns = [c.strip() for c in df.columns]
         
-        # 映射列
-        item_map = {}
+        col_map = {
+            'code': ['代码'], 'name': ['名称'], 'open_pct': ['竞价涨幅'],
+            'close_pct': ['涨跌幅', '涨幅'], 'bid_amt': ['早盘竞价金额', '竞价金额'],
+            'amount': ['当日成交额', '成交额'], 'circ_mv': ['自由流通市值', '流通市值'],
+            'boards': ['连板', '几天几板', '连板数'], 'high': ['最高'], 'low': ['最低'],
+            'last_amt_backup': ['昨日成交额'] 
+        }
+        final_cols = {}
+        for k, v in col_map.items():
+            for c in v:
+                found = next((col for col in df.columns if c in col), None)
+                if found:
+                    if k=='amount' and '昨日' in found: continue
+                    final_cols[k] = found; break
         
-        # 查找关键列
-        col_code = next((c for c in df.columns if '代码' in c), None)
-        col_name = next((c for c in df.columns if '名称' in c), None)
-        col_zt = next((c for c in df.columns if '连板' in c or '几天几板' in c or '连续涨停' in c), None) # 连板天数
-        col_mv = next((c for c in df.columns if '流通市值' in c), None)
-        
-        # 优先匹配 '当日成交额' (对于历史文件，我们需要当天的成交额作为 yest_amt)
-        # 其次匹配 '成交额'
-        col_amt = next((c for c in df.columns if '当日成交额' in c), None)
-        if not col_amt: col_amt = next((c for c in df.columns if '成交额' in c and '昨日' not in c), None)
-        if not col_amt: col_amt = next((c for c in df.columns if '成交额' in c), None)
-        
-        col_bid = next((c for c in df.columns if '早盘竞价金额' in c), None)
-        col_op = next((c for c in df.columns if '竞价涨幅' in c), None)
-        col_cp = next((c for c in df.columns if '涨幅' in c and '竞价' not in c), None) # 收盘涨幅
-        
-        # Capture Yesterday's Amount from the same file (Backup)
-        col_last_amt = next((c for c in df.columns if '昨日成交额' in c), None)
-        
+        res = {}
         for _, row in df.iterrows():
-            code_raw = str(row[col_code])
-            code = re.sub(r'\D', '', code_raw).zfill(6)
-            
-            # --- 解析数值 ---
-            def parse_val(v):
-                if pd.isna(v): return 0.0
-                s = str(v).strip().replace('%', '')
-                if s in ['--', 'nan']: return 0.0
-                unit = 1.0
-                if '亿' in s: unit = 100000000.0; s = s.replace('亿', '')
-                elif '万' in s: unit = 10000.0; s = s.replace('万', '')
-                try: return float(s) * unit
-                except: return 0.0
-
-            # 连板数解析
-            boards = 0
-            if col_zt:
-                b_str = str(row.get(col_zt, ''))
-                nums = re.findall(r'\d+', b_str)
-                if nums: boards = int(nums[-1])
-                
-                # Sanity Check (THS magic number 65537 fix)
-                if boards > 100: boards = 0
-            
-            item = {
+            if 'code' not in final_cols: continue
+            code = re.sub(r'\D', '', str(row[final_cols['code']])).zfill(6)
+            res[code] = {
                 'code': code,
-                'name': str(row.get(col_name, '')).strip(),
-                'boards': boards,
-                'circ_mv': parse_val(row.get(col_mv)),
-                'amount': parse_val(row.get(col_amt)),
-                'last_amount': parse_val(row.get(col_last_amt)), # Backup source
-                'bid_amt': parse_val(row.get(col_bid)),
-                'open_pct': parse_val(row.get(col_op)),
-                'close_pct': parse_val(row.get(col_cp))
+                'name': str(row.get(final_cols.get('name'), '')).strip(),
+                'open_pct': parse_val(row.get(final_cols.get('open_pct'))),
+                'close_pct': parse_val(row.get(final_cols.get('close_pct'))),
+                'bid_amt': parse_val(row.get(final_cols.get('bid_amt'))),
+                'amount': parse_val(row.get(final_cols.get('amount'))),
+                'circ_mv': parse_val(row.get(final_cols.get('circ_mv'))),
+                'boards': parse_boards(row.get(final_cols.get('boards'))),
+                'high': parse_val(row.get(final_cols.get('high'), 0)),
+                'last_amt_backup': parse_val(row.get(final_cols.get('last_amt_backup'), 0))
             }
-            item_map[code] = item
-            
-        return item_map
-        
-    except Exception as e:
-        print(f"{Fore.RED}❌ 解析出错: {e}")
-        return {}
+        return res
+    except: return {}
 
-# --- 主逻辑 ---
+def get_files():
+    """
+    智能获取文件逻辑：
+    1. 扫描目录下所有 Table-*.txt
+    2. 按日期归组
+    3. 如果同一日期有 _fixed 版本，优先使用 _fixed
+    4. 返回最新的两个日期文件
+    """
+    files = [f for f in os.listdir(DATA_DIR) if f.startswith('Table') and f.endswith('.txt')]
+    file_map = {}
+    
+    for f in files:
+        m = re.search(r'(\d{8})', f)
+        if not m: continue
+        date_int = int(m.group(1))
+        
+        is_fixed = '_fixed' in f
+        
+        # 如果该日期尚未记录，或者当前文件是 fixed 版本而记录的不是，则更新
+        if date_int not in file_map:
+            file_map[date_int] = f
+        else:
+            if is_fixed and '_fixed' not in file_map[date_int]:
+                file_map[date_int] = f
+    
+    # 转换为列表并排序
+    final_list = [{'path': os.path.join(DATA_DIR, v), 'date': k} for k, v in file_map.items()]
+    final_list.sort(key=lambda x: x['date'], reverse=True)
+    
+    return (final_list[0], final_list[1]) if len(final_list) >= 2 else (None, None)
+
 def run_backtest():
-    print(f"{Fore.CYAN}🚀 DDD 策略回测启动...{Style.RESET_ALL}")
+    f_t, f_p = get_files()
+    if not f_t: return
+    print(f"{Fore.CYAN}🚀 回测日期: {f_t['date']} (T-1: {f_p['date']}){Style.RESET_ALL}")
     
-    # 1. 确定文件
-    file_today, file_yest = get_test_files()
-    if not file_today: return
+    # 打印文件名确认是否读取了 fixed
+    print(f"   T  日文件: {os.path.basename(f_t['path'])}")
+    print(f"   T-1日文件: {os.path.basename(f_p['path'])}")
     
-    print(f"📅 T 日 (模拟今日): {os.path.basename(file_today['path'])}")
-    print(f"🔙 T-1日 (历史背景): {os.path.basename(file_yest['path'])}")
+    data_t = parse_ths_file(f_t['path'])
+    data_p = parse_ths_file(f_p['path'])
     
-    # 2. 加载数据
-    data_today = parse_ths_file(file_today['path'])
-    data_yest = parse_ths_file(file_yest['path'])
+    selected = []
+    near_misses = [] 
     
-    if not data_today or not data_yest:
-        print("❌ 数据加载失败")
-        return
-
-    print(f"✅ 数据就绪: T日 {len(data_today)} 条 | T-1日 {len(data_yest)} 条")
-    
-    # 3. 模拟竞价筛选
-    results = []
-    
-    print(f"\n{Fore.YELLOW}⏳ 正在执行 9:25 模拟筛选...{Style.RESET_ALL}")
-    
-    print(f"\n{Fore.YELLOW}⏳ 正在执行 9:25 模拟筛选...{Style.RESET_ALL}")
-    
-    for code, item_t in data_today.items():
-        # 必须在昨天有数据才能判断 (因为需要昨成交、昨连板状态)
-        if code not in data_yest: continue
+    for code, item_t in data_t.items():
+        is_debug = code in TARGET_DEBUG_CODES
         
-        item_y = data_yest[code]
-
+        if code not in data_p: continue
+        item_p = data_p[code]
         
-        # --- Fallback Logic for Dirty Data ---
-        # 1. Fix Boards: If boards=0 but T-1 was Limit Up, assume 1 board.
-        boards_prev = item_y['boards']
-        if boards_prev == 0 and item_y['close_pct'] >= 9.8:
-            boards_prev = 1
-            
-        # 2. Fix Amount: If T-1 Amount is missing, use T-Day's 'Yesterday Amount'
-        yest_amt = item_y['amount']
-        if yest_amt == 0 and item_t['last_amount'] > 0:
-            yest_amt = item_t['last_amount']
-
+        # 1. 连板数据补全
+        boards_p = item_p['boards']
+        if boards_p == 0 and item_p['close_pct'] >= 9.8: boards_p = 1
         
-        # 构造 Strategy 需要的包
-        # Realtime row (simulated from T day data)
-        # 注意: calculate_ddd_realtime 期望 'auc_amt' 单位为 万
-        row_sim = {
-            'open_pct': item_t['open_pct'],
-            'auc_amt': item_t['bid_amt'] / 10000.0  # 转为万
+        # --- 数据完整性校验 ---
+        yest_amt = item_p['amount']
+        
+        if yest_amt == 0:
+            # 搜救逻辑 (如果昨文件也是坏的，尝试用今文件的备份列)
+            if item_t['last_amt_backup'] > 0:
+                yest_amt = item_t['last_amt_backup']
+                if is_debug: print(f"   ⚠️ [Repair] 使用 T 日表中的昨日数据: {int(yest_amt/10000)}w")
+            elif item_t['amount'] > 0:
+                yest_amt = item_t['amount'] # 拙劣估算
+                if is_debug: print(f"   ⚠️ [Repair] 使用今日成交额估算: {int(yest_amt/10000)}w")
+        
+        if yest_amt == 0: 
+            if is_debug: print(f"   ❌ [Fail] 彻底无法获取昨日成交额，跳过")
+            continue
+        # -----------------------------
+
+        # 2. 策略计算
+        row_sim = {'open_pct': item_t['open_pct'], 'auc_amt': item_t['bid_amt']/10000.0}
+        hist_sim = {'circ_mv': item_p['circ_mv'], 'yest_amt': yest_amt, 'last_bid_amt': item_p['bid_amt'], 'boards': boards_p}
+        
+        score, dec, reason = calculate_ddd_realtime(row_sim, hist_sim)
+        
+        if is_debug:
+            print(f"   ✅ [Calc Done] 得分={score} | 原因={reason}")
+
+        bid_yest_ratio = (item_t['bid_amt'] / yest_amt) if yest_amt > 0 else 0
+        
+        profit = item_t['close_pct'] - item_t['open_pct']
+        is_zt = item_t['close_pct'] >= 9.8
+        
+        res_obj = {
+            'code': code, 'name': item_t['name'], 'open': item_t['open_pct'],
+            'close': item_t['close_pct'], 'profit': profit, 'is_zt': is_zt,
+            'dec': dec, 'reason': reason, 'boards_p': boards_p,
+            'bid_amt': item_t['bid_amt']
         }
-        
-        # History item (from T-1 day data)
-        # 修正: 'last_bid_amt' 是 昨天的竞价金额，即 T-1 日的 bid_amt
-        hist_sim = {
-            'circ_mv': item_y['circ_mv'],
-            'yest_amt': yest_amt,
-            'boards': boards_prev,
-            'last_bid_amt': item_y['bid_amt'] 
-        }
-        
-        # 执行策略
-        score, dec, detail = calculate_ddd_realtime(row_sim, hist_sim)
-        
-        # DEBUG: Print details for Guangdian 601616
-        if code == '601616':
-             print(f"🔎 DEBUG 601616: Score={score} | Dec='{dec}' | Reason='{detail}'")
-             print(f"   Inputs: MV={hist_sim['circ_mv']/100000000:.2f}Y | YestAmt={hist_sim['yest_amt']/100000000:.2f}Y | Boards={hist_sim['boards']}")
 
-        if score > 0:
-            # 记录结果
-            is_win = item_t['close_pct'] >= 9.8 
-            profit = item_t['close_pct'] - item_t['open_pct']
+        if score >= 90:
+            selected.append(res_obj)
+        elif score >= 80:
+            res_obj['dec'] = "👀观察"
+            selected.append(res_obj)
+        else:
+            # 搜救
+            cond_board = (boards_p >= 1 and item_t['open_pct'] > 2.0 and "一字" not in reason)
+            cond_ratio = (bid_yest_ratio > 0.07 and item_t['open_pct'] > 2.0 and "一字" not in reason)
+            cond_missing = (boards_p == 0 and item_t['open_pct'] > 3.5 and item_p['close_pct'] > 5.0)
             
-            res = {
-                'code': code,
-                'name': item_t['name'],
-                'decision': dec,
-                'detail': detail,
-                'open': item_t['open_pct'],
-                'close': item_t['close_pct'],
-                'profit': profit,
-                'is_win': is_win,
-                'boards_prev': item_y['boards']
-            }
-            results.append(res)
+            if cond_board or cond_ratio or cond_missing:
+                if cond_ratio: res_obj['reason'] += f"(🔥竞昨比{bid_yest_ratio*100:.1f}%)"
+                elif cond_missing: res_obj['reason'] += "(疑似连板遗漏)"
+                near_misses.append(res_obj)
 
-    # 4. 输出报告
-    results.sort(key=lambda x: x['boards_prev'])
-    
-    print(f"\n{Fore.WHITE}📊 回测结果报告 (Target Date: {file_today['date']}){Style.RESET_ALL}")
-    print("=" * 100)
-    print(f"{'代码':<8} {'名称':<8} {'T-1板':<6} {'策略标签':<12} {'开盘%':<6} {'收盘%':<6} {'浮盈%':<6} {'结果'}")
-    print("-" * 100)
-    
-    total_count = len(results)
-    win_count = 0
-    pos_count = 0
-    total_profit = 0
-    
-    for r in results:
-        res_str = f"{Fore.RED}涨停🔥" if r['is_win'] else (f"{Fore.RED}收红" if r['profit'] > 0 else f"{Fore.GREEN}收绿")
-        if r['is_win']: win_count += 1
-        if r['profit'] > 0: pos_count += 1
-        total_profit += r['profit']
-        
-        color_p = Fore.RED if r['profit'] > 0 else Fore.GREEN
-        
-        print(f"{r['code']:<8} {r['name']:<8} {r['boards_prev']:<6} {r['decision']:<12} {r['open']:>6.2f} {r['close']:>6.2f} {color_p}{r['profit']:>6.2f}{Style.RESET_ALL} {res_str}{Style.RESET_ALL}")
+    print_table("🏆 DDD 策略选中标的", selected)
+    near_misses.sort(key=lambda x: x['open'], reverse=True)
+    print_table("👀 观察池 (人工二次筛选)", near_misses[:25], is_miss=True)
 
-    print("=" * 100)
-    if total_count > 0:
-        avg_profit = total_profit / total_count
-        win_rate = (win_count / total_count) * 100
-        pos_rate = (pos_count / total_count) * 100
-        
-        print(f"🎯 选中标的: {total_count} 只")
-        print(f"🔥 涨停命中: {win_count} 只 (胜率 {win_rate:.1f}%)")
-        print(f"📈 收盘红盘: {pos_count} 只 (胜率 {pos_rate:.1f}%)")
-        print(f"💰 平均肉度: {Fore.RED if avg_profit>0 else Fore.GREEN}{avg_profit:.2f}%{Style.RESET_ALL}")
-    else:
-        print("⚠️ 该日无符合 DDD 策略的标的。")
+def print_table(title, data, is_miss=False):
+    if not data: return
+    print(f"\n{Fore.WHITE}== {title} =={Style.RESET_ALL}")
+    print(f"{'代码':<7} {'名称':<8} {'T-1板':<6} {'竞价%':<6} {'收盘%':<6} {'浮盈%':<6} {'状态':<6} {'说明/淘汰原因'}")
+    print("-" * 110)
+    if not is_miss: data.sort(key=lambda x: (x['boards_p'], x['open']), reverse=True)
+    for r in data:
+        p_color = Fore.RED if r['profit'] > 0 else Fore.GREEN
+        status = "涨停🔥" if r['is_zt'] else ("收红" if r['profit']>0 else "吃面")
+        reason_str = f"{Fore.CYAN}{r['reason']}{Style.RESET_ALL}" if is_miss else r['reason']
+        print(f"{r['code']:<7} {r['name']:<8} {r['boards_p']:<6} {r['open']:>6.2f} {r['close']:>6.2f} {p_color}{r['profit']:>6.2f}{Style.RESET_ALL} {status:<6} {reason_str}")
 
 if __name__ == '__main__':
     run_backtest()
