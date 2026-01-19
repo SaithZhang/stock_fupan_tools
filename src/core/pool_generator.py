@@ -46,7 +46,17 @@ except ImportError as e:
     print(f"{Fore.YELLOW}⚠️ 筹码分析模块加载失败: {e} (将跳过筹码分析)")
     # 定义空函数防止报错
     def get_chip_metrics(*args): return None
+
     def generate_chip_tag(*args): return ""
+
+# --- 导入 DDD 模式 ---
+try:
+    sys.path.append(os.path.join(PROJECT_ROOT, 'src', 'strategies'))
+    from ddd_mode import get_ddd_pool_category
+    print(f"{Fore.GREEN}✅ DDD模式模块加载成功")
+except ImportError as e:
+    print(f"{Fore.YELLOW}⚠️ DDD模式模块加载失败: {e}")
+    def get_ddd_pool_category(*args): return None
 
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'data', 'output')
 ARCHIVE_DIR = os.path.join(OUTPUT_DIR, 'archive')
@@ -575,6 +585,12 @@ def generate_strategy_pool():
              if f_tags:
                  base_tags.extend(f_tags)
                  is_selected = True # model selected it
+
+        # --- 2.8 DDD 模式分组 ---
+        ddd_tag = get_ddd_pool_category(item)
+        if ddd_tag:
+            is_selected = True 
+            base_tags.append(ddd_tag)
 
 
         # --- 3. 标签组装 ---

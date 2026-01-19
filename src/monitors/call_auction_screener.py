@@ -61,10 +61,10 @@ from src.utils.data_loader import parse_call_auction_file, get_latest_call_aucti
 
 # [新增] 引入 DDD 策略模块
 try:
-    from src.strategies.ddd_mode import check_ddd_strategy
+    from src.strategies.ddd_mode import calculate_ddd_realtime
 except ImportError:
     sys.path.append(os.path.join(PROJECT_ROOT, 'src', 'strategies'))
-    from ddd_mode import check_ddd_strategy
+    from ddd_mode import calculate_ddd_realtime
 
 def load_history_data():
     """Wrapper specifically for this script's display messages"""
@@ -340,7 +340,15 @@ def analyze_stock(row, history_info, pool_map, phase, sector_map=None):
         }
 
     # --- [新增] DDD 策略兼容 ---
-    ddd_score, ddd_dec, ddd_tag = check_ddd_strategy(row, history_info[code])
+    # 构造 history_item 供 DDD 模块使用
+    ddd_history = {
+        'circ_mv': info.get('circ_mv', 0),    # 需确保单位是 元
+        'yest_amt': info.get('yest_amt', 0),  # 需确保单位是 元 (昨成交额)
+        'boards': info.get('boards', 0),
+        'last_bid_amt': info.get('yest_bid_amt', 0) # 对应 data_loader 中的 key
+    }
+
+    ddd_score, ddd_dec, ddd_tag = calculate_ddd_realtime(row, ddd_history)
     if ddd_score > 0:
         score = ddd_score
         decision = ddd_dec
