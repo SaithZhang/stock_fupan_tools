@@ -291,6 +291,37 @@ def main():
 
     print(f"{Fore.YELLOW}🔥 领涨: {sector_summary}{Style.RESET_ALL}")
 
+    # ================= ✨ 把这段代码移到这里 (开始) ✨ =================
+    # 1. 提取全市场涨停/跌停股
+    limit_up_list = df[df['涨跌幅'] > 9.8].copy()
+    limit_down_list = df[df['涨跌幅'] < -9.8].copy()
+
+    # 打印榜单的分割线
+    print("-" * 120)
+
+    # --- 打印涨停榜 ---
+    print(f"{Back.RED}{Fore.WHITE} 🚀 涨停风向标 (共 {len(limit_up_list)} 家，前15) {Style.RESET_ALL}")
+    if not limit_up_list.empty:
+        up_display = []
+        for _, row in limit_up_list.head(15).iterrows():
+            up_display.append(f"{row['名称']}({row['代码']})")
+        for i in range(0, len(up_display), 5):
+            print(f"{Fore.RED}{'  '.join(up_display[i:i + 5])}{Style.RESET_ALL}")
+    else:
+        print("暂无涨停")
+
+    # --- 打印跌停榜 ---
+    print(f"{Back.GREEN}{Fore.WHITE} 🌊 跌停避雷针 (共 {len(limit_down_list)} 家，前15) {Style.RESET_ALL}")
+    if not limit_down_list.empty:
+        down_display = []
+        for _, row in limit_down_list.head(15).iterrows():
+            down_display.append(f"{row['名称']}({row['代码']})")
+        for i in range(0, len(down_display), 5):
+            print(f"{Fore.GREEN}{'  '.join(down_display[i:i + 5])}{Style.RESET_ALL}")
+    else:
+        print("暂无跌停")
+    # ================= ✨ 把这段代码移到这里 (结束) ✨ =================
+
     print("-" * 120)
     # 调整了列宽
     print(
@@ -325,7 +356,7 @@ def main():
         )
         print(row_str)
 
-    print("-" * 120)
+    print("=" * 120 + "\n")
 
 
 if __name__ == "__main__":
