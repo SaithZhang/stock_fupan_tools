@@ -10,6 +10,7 @@ import sys
 import re
 from datetime import datetime
 import json
+import numpy as np  # <--- 新增这行，用于计算均线
 from colorama import init, Fore
 
 # --- 导入修复 ---
@@ -25,7 +26,7 @@ try:
     from strategies.f_lao_model import load_ths_history, check_fen_jue
 except ImportError:
     # Fallback if run from different dir
-    sys.path.append(os.path.join(os.path.dirname(os.path.dirname(current_dir)), 'src')) 
+    sys.path.append(os.path.join(os.path.dirname(os.path.dirname(current_dir)), 'src'))
     from strategies.f_lao_model import load_ths_history, check_fen_jue
 # --------------
 
@@ -39,7 +40,7 @@ sys.path.append(PROJECT_ROOT) # Fix import src issue
 # --- 导入筹码分析模块 ---
 # 假设 chip_analyzer.py 放在 src/tools/ 下
 try:
-    sys.path.append(os.path.join(PROJECT_ROOT, 'src')) 
+    sys.path.append(os.path.join(PROJECT_ROOT, 'src'))
     from tools.chip_analyzer import get_chip_metrics, generate_chip_tag
     print(f"{Fore.GREEN}✅ 筹码分析模块加载成功")
 except ImportError as e:
@@ -66,8 +67,8 @@ F_LAO_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'f_lao_list.txt')
 
 # --- 策略配置 (与 akshare 版保持一致) ---
 CORE_KEYWORDS = [
-    '机器人', '航天', '军工', '卫星', '低空',
-    'AI', '人工智能', '智能体', '算力', 'CPO', '存储',
+    '机器人', '航天', '军工', '卫星', '低空', '电网', '电力',
+    'AI', '人工智能', '智能体', '算力', 'CPO', '存储', '半导体',
     '消费电子', '华为', '信创', '数字货币', '数据要素',
     '文化传媒', '短剧', '多模态', '纺织', '并购重组', '固态电池', '自动驾驶'
 ]
@@ -112,17 +113,17 @@ def load_yesterday_pool():
     返回: {code: {'amount': float, 'tag': str}}
     """
     if not os.path.exists(OUTPUT_DIR): return {}
-    
+
     # 1. 查找所有 strategy_pool_YYYYMMDD.csv
     files = []
     today_str = datetime.now().strftime("%Y%m%d")
-    
+
     for f in os.listdir(OUTPUT_DIR):
         if f.startswith('strategy_pool_') and f.endswith('.csv'):
             date_part = f.replace('strategy_pool_', '').replace('.csv', '')
             if date_part.isdigit() and date_part < today_str:
                 files.append({'path': os.path.join(OUTPUT_DIR, f), 'date': date_part})
-                
+
     if not files:
         # 尝试 archive 目录
         if os.path.exists(ARCHIVE_DIR):
@@ -135,12 +136,12 @@ def load_yesterday_pool():
     if not files:
         print(f"{Fore.YELLOW}⚠️ 未找到昨日(或更早)的策略池文件，无法执行[断板反包]策略")
         return {}
-        
+
     # 2. 排序取最新的一个
     files.sort(key=lambda x: x['date'], reverse=True)
     target_file = files[0]['path']
     print(f"{Fore.BLUE}🔙 回溯历史数据: {os.path.basename(target_file)}")
-    
+
     res_map = {}
     try:
         df = pd.read_csv(target_file, dtype={'code': str, 'sina_code': str})
@@ -148,7 +149,7 @@ def load_yesterday_pool():
         for _, row in df.iterrows():
             c = str(row['code']).zfill(6)
             tag = str(row.get('tag', ''))
-            
+
             # 筛选昨日炸板股 (tag中包含"炸板")
             # 注意：昨日必须是真的炸板了，而不是"反包预期"这种
             # 简单判断: 只要 tag 里有 "炸板" 字样，就纳入观察池
@@ -159,7 +160,7 @@ def load_yesterday_pool():
                 }
     except Exception as e:
         print(f"{Fore.RED}❌ 读取历史文件失败: {e}")
-        
+
     return res_map
 
 
@@ -173,7 +174,7 @@ def load_lhb_info():
     lhb_dir = os.path.join(PROJECT_ROOT, 'data', 'output', 'lhb')
     lhb_path = os.path.join(lhb_dir, 'lhb_latest.csv')
     seat_path = os.path.join(lhb_dir, 'lhb_famous_latest.csv')
-    
+
     lhb_codes = set()
     if os.path.exists(lhb_path):
         try:
@@ -190,11 +191,11 @@ def load_lhb_info():
          try:
              df = pd.read_csv(seat_path, dtype=str)
              import re
-             
+
              # Columns: 游资标签, 营业部名称, 买入股票, 卖出股票...
              for _, row in df.iterrows():
                  label = row['游资标签']
-                 
+
                  # Helper to process string: "Stock(1亿) Stock/3日(2亿)"
                  def parse_lhb_str(raw_str, default_prefix):
                     if not raw_str or raw_str == 'nan': return
@@ -203,16 +204,16 @@ def load_lhb_info():
                     for p in parts:
                         p = p.strip()
                         if not p: continue
-                        
+
                         s_name = p
                         note = ""
-                        
+
                         if '(' in p:
                             s_name = p.split('(')[0]
                             # Capture content inside parenthesis, e.g. (1亿) or (🔒 锁仓)
                             content = p.split('(')[1].rstrip(')')
                             note = f"({content})"
-                        
+
                         # Handle /Tag in name
                         tag_info = ""
                         if '/' in s_name:
@@ -220,26 +221,26 @@ def load_lhb_info():
                             tag_part = s_name.split('/')[1] # e.g. 3日
                             s_name = real_name
                             tag_info = f"/{tag_part}"
-                        
+
                         if s_name not in seat_map: seat_map[s_name] = set()
-                        
+
                         # Determine prefix based on content
                         prefix = default_prefix
                         if "锁仓" in note or "锁仓" in p:
                             prefix = "🔒" # Lock
                         elif "加仓" in note:
                             prefix = "➕" # Add (Stronger than Buy)
-                        
+
                         # Construct tag
                         full_tag = f"{prefix}{label}{tag_info}{note}"
                         seat_map[s_name].add(full_tag)
 
                  parse_lhb_str(str(row.get('买入股票', '')), "💰")
                  parse_lhb_str(str(row.get('卖出股票', '')), "🏃")
-                     
+
          except Exception as e:
             print(f"{Fore.RED}❌ 游资数据加载失败: {e}")
-            
+
     return lhb_codes, seat_map
 
 
@@ -331,41 +332,41 @@ def get_core_concepts_local(name, raw_tag):
 
 def calculate_market_stats(all_data, yesterday_data):
     """
-    计算: 
+    计算:
     1. 涨跌停家数 (非ST)
     2. 昨日涨停溢价
     3. 连板高度
-    
+
     * 板块涨幅/资金流向数据现在由 MarketDataManager 直接读取 ths 文件提供
     """
     stats = {}
-    
+
     # --- 1. Limit Up/Down Counts ---
     limit_up = 0
     limit_down = 0
     max_height = 0
-    
+
     for item in all_data:
         name = item['name']
         if 'ST' in name.upper(): continue
-        
+
         pct = item.get('today_pct', 0)
-        
+
         # Simple ZT/DT check (approximate)
         if pct > 9.8: limit_up += 1
         if pct < -9.0: limit_down += 1
-        
+
         h = item.get('limit_days', 0)
         if h > max_height: max_height = h
-        
+
     stats['limit_up_count'] = limit_up
     stats['limit_down_count'] = limit_down
     stats['highest_space'] = max_height
-    
+
     # --- 2. Yesterday ZT Premium ---
     # Find stocks that were ZT yesterday
     yest_zt_codes = [c for c, v in yesterday_data.items() if v.get('is_zt')]
-    
+
     total_premium = 0
     valid_premium_count = 0
     for c in yest_zt_codes:
@@ -375,10 +376,10 @@ def calculate_market_stats(all_data, yesterday_data):
         if curr:
             total_premium += curr.get('open_pct', 0)
             valid_premium_count += 1
-            
+
     avg_premium = round(total_premium / valid_premium_count, 2) if valid_premium_count > 0 else 0
     stats['yesterday_limit_up_premium'] = avg_premium
-    
+
     return stats
 
 
@@ -390,13 +391,13 @@ def check_special_shape(item):
     # Original function body was small, I will just keep the original valid.
     # Wait, tool calling 'replace' with context. The original function is below.
     # I will just REPLACE the original function if I want to update it, or just INSERT above.
-    
+
     # New Logic: Limit Up Type
     limit_type = ""
     if item.get('is_zt'):
         open_pct = item.get('open_pct', 0)
         open_num = item.get('open_num', 0)
-        
+
         if open_pct > 9.0:
             if open_num == 0:
                 limit_type = "一字"
@@ -404,14 +405,92 @@ def check_special_shape(item):
                 limit_type = "T字"
         else:
              limit_type = "换手板"
-             
+
         if open_num > 5: # Many opens
             limit_type += "/烂板"
-            
+
     return tags, limit_type
 
 
+# ================= 新增核心逻辑开始 =================
 
+def calculate_technical_indicators(history_df, current_price):
+    """计算 MA5/10/20 及趋势状态"""
+    tags = []
+    indicators = {}
+
+    if history_df is None or len(history_df) < 5:
+        return tags, indicators
+
+    # 确保按日期升序
+    df = history_df.sort_values('date')
+    closes = df['close'].values
+
+    # 计算均线
+    ma5 = np.mean(closes[-5:]) if len(closes) >= 5 else 0
+    ma10 = np.mean(closes[-10:]) if len(closes) >= 10 else 0
+    ma20 = np.mean(closes[-20:]) if len(closes) >= 20 else 0
+
+    # 偏差率
+    bias_5 = (current_price - ma5) / ma5 if ma5 > 0 else 0
+
+    # 策略 1: 趋势核心 (MA5>MA10>MA20 且未破位)
+    is_bullish_trend = (ma5 > ma10) and (current_price > ma20)
+
+    if is_bullish_trend:
+        # 策略 2: 5日线低吸 (回踩 MA5 -1% ~ +2.5%)
+        if -0.01 <= bias_5 <= 0.025:
+            tags.append("🎯5日线低吸")
+        elif bias_5 > 0.05:
+            tags.append("🚀趋势加速")
+        tags.append("🌊趋势向上")
+
+    # 策略 3: 死鱼/稀有品种 (横盘待启动)
+    if len(closes) > 5:
+        recent_volatility = np.std(closes[-5:]) / np.mean(closes[-5:])
+        if recent_volatility < 0.02 and current_price > ma20:
+            tags.append("🐟死鱼/待启动")
+
+    return tags, indicators
+
+
+def analyze_market_phase(pool_data, market_stats):
+    """判断市场状态：轮动 vs 主线"""
+    phase_info = {"phase": "未知", "action_guide": ""}
+
+    # 1. 量能分析 (Vol Ratio < 0.85 视为缩量)
+    valid_vols = [x['vol_ratio'] for x in pool_data if x.get('vol_ratio', 0) > 0]
+    avg_vol_ratio = sum(valid_vols) / len(valid_vols) if valid_vols else 1.0
+    is_shrinking = avg_vol_ratio < 0.85
+
+    # 2. 板块集中度
+    sector_counts = {}
+    total_zt = 0
+    for item in pool_data:
+        if item.get('today_pct', 0) > 9.0:
+            total_zt += 1
+            found = "其他"
+            # 简单提取Tag里的板块
+            for t in str(item.get('tag', '')).split('/'):
+                if t in CORE_KEYWORDS: found = t; break
+            sector_counts[found] = sector_counts.get(found, 0) + 1
+
+    # Top3 板块占比
+    top3 = sorted(sector_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+    concentration = (sum([x[1] for x in top3]) / total_zt) if total_zt > 0 else 0
+
+    if is_shrinking:
+        phase_info["phase"] = "🌪️ 缩量轮动" if concentration < 0.5 else "📉 缩量抱团"
+        phase_info["action_guide"] = "量能不足，切忌追高。策略：低吸核心做T，或潜伏死鱼。"
+    else:
+        phase_info["phase"] = "🚀 主线主升" if concentration > 0.6 else "⚔️ 放量分歧"
+        phase_info["action_guide"] = "积极做多核心" if concentration > 0.6 else "去弱留强，关注弱转强"
+
+    phase_info['top_sectors'] = [x[0] for x in top3]
+    return phase_info
+
+
+# ================= 新增核心逻辑结束 =================
 
 # ================= 3. 主生成逻辑 =================
 
@@ -423,14 +502,14 @@ def generate_strategy_pool():
 
     holdings_map = load_text_list(HOLDINGS_PATH)
     f_lao_map = load_text_list(F_LAO_PATH)
-    
+
     # --- 辨识度/人气标的加载 ---
     MANUAL_FOCUS_PATH = os.path.join(PROJECT_ROOT, 'data', 'input', 'manual_focus.txt')
     manual_recognition_map = load_text_list(MANUAL_FOCUS_PATH)
 
     # --- 昨日炸板数据加载 (新策略) ---
     broken_pool_map = load_yesterday_pool()
-    
+
     # --- 龙虎榜/游资数据加载 (新策略) ---
     lhb_codes, lhb_seat_map = load_lhb_info()
 
@@ -442,16 +521,16 @@ def generate_strategy_pool():
     dapan_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'dapan')
     md_manager = MarketDataManager(dapan_dir)
     market_loaded = md_manager.load_data()
-    
+
     # --- F佬模型历史数据加载 (New) ---
     print(f"{Fore.MAGENTA}� 正在加载最近5日历史数据 (for F佬模型)...")
     ths_input_dir = os.path.join(PROJECT_ROOT, 'data', 'input', 'ths')
-    history_map = load_ths_history(ths_input_dir, days=5)
-    
+    history_map = load_ths_history(ths_input_dir, days=30)
+
     # Calculate enhanced stats
     market_stats = calculate_market_stats(all_data, yest_full_data)
     md_manager.update_extra_stats(market_stats) # Implicitly assume MarketDataManager can hold this, or just merge into final json
-    
+
     if market_loaded:
         print(f"   ✅ {md_manager.get_formatted_summary()}")
     else:
@@ -469,11 +548,14 @@ def generate_strategy_pool():
         code = str(item['code'])
         name = item['name']
         pct = item.get('today_pct', 0)
+        # 👇👇👇 【在这里添加这行代码】 👇👇👇
+        price = item.get('price', 0)
+        # 👆👆👆 必须添加这一行，否则下面会报错
         is_holding = (code in holdings_map) # 标记是否为持仓
 
         raw_tag_str = str(item.get('tag', ''))
         if 'nan' in raw_tag_str: raw_tag_str = ""
-        
+
         # --- 0. 全局过滤: 剔除 ST 股 ---
         if 'ST' in name.upper():
             continue
@@ -517,12 +599,12 @@ def generate_strategy_pool():
                 final_manual = f"F佬/{cleaned_note}" if cleaned_note != "关注" else "F佬/关注"
                 base_tags.append(final_manual)
                 manual_cleaned_tag = final_manual
-                
+
         # --- 2.1 龙虎榜 & 游资判定 (新增) ---
         if code in lhb_codes:
             is_selected = True
             base_tags.append("🐉龙虎榜")
-        
+
         if name in lhb_seat_map:
             is_selected = True
             # 添加游资标签 (已去重)
@@ -532,30 +614,30 @@ def generate_strategy_pool():
                 if t.startswith("💰"): return 1
                 if t.startswith("🏃"): return 2
                 return 3
-                
+
             seat_tags = sorted(list(lhb_seat_map[name]), key=tag_sort_key)
             base_tags.extend(seat_tags)
-        
+
         # --- 2.5 辨识度/人气判定 (新增) ---
         is_popular = False
         pop_reasons = set()
-        
+
         # A. 手动维护的人气股
         if code in manual_recognition_map or name in manual_recognition_map:
             is_popular = True
-            
+
         # B. 自动判定：3连板以上高标
         limit_days = item.get('limit_days', 0)
         if limit_days >= 3:
             is_popular = True
             # 板数后面会自动加，这里不重复加
-            
+
         # C. 自动判定：大成交额前排 (>=20亿)
         amount_val = item.get('amount', 0)
         if amount_val >= 20_0000_0000: # 20亿
             is_popular = True
-            pop_reasons.add("成交") 
-        
+            pop_reasons.add("成交")
+
         if is_popular:
             is_selected = True
             base_tags.append("★人气")
@@ -568,15 +650,15 @@ def generate_strategy_pool():
             # 只要是红盘，就纳入
             if pct > 0:
                 is_selected = True
-                
+
                 # 计算是否爆量
                 yest_amt = broken_pool_map[code]['amount']
                 curr_amt = item.get('amount', 0)
-                
+
                 label = "🔥断板反包"
                 if yest_amt > 10000 and curr_amt > yest_amt: # 简单判断成交额增加
                      label += "/爆量"
-                
+
                 base_tags.append(label)
 
         # --- 2.7 F佬焚诀模型 (New) ---
@@ -589,9 +671,18 @@ def generate_strategy_pool():
         # --- 2.8 DDD 模式分组 ---
         ddd_tag = get_ddd_pool_category(item)
         if ddd_tag:
-            is_selected = True 
+            is_selected = True
             base_tags.append(ddd_tag)
 
+        # [新增] 技术分析 (均线/趋势/低吸)
+        # 逻辑：只要是关注池里的，或者是2连板以上的票，都进行分析
+        if is_selected or item.get('limit_days', 0) >= 2:
+            tech_tags, indicators = calculate_technical_indicators(history_map.get(code), price)
+            if tech_tags:
+                base_tags.extend(tech_tags)
+                # 如果系统检测到趋势低吸，强制入选 (即使不在关注池)
+                if "🎯5日线低吸" in tech_tags:
+                    is_selected = True
 
         # --- 3. 标签组装 ---
 
@@ -624,7 +715,7 @@ def generate_strategy_pool():
         # --- 🔴 新增：筹码与做T分析 (仅对持仓或高关注度标的) ---
         # 触发条件：是持仓股 OR 是昨日炸板关注股 OR 是人气高标
         should_analyze_chips = is_holding or (code in broken_pool_map) or (item.get('limit_days', 0) >= 3)
-        
+
         if is_selected and should_analyze_chips:
             print(f"   🔎 分析筹码: {name} ({code}) ...", end="")
             chip_metrics = get_chip_metrics(code)
@@ -647,13 +738,13 @@ def generate_strategy_pool():
 
             # 特殊形态 & 板型
             shape_tags, zt_type = check_special_shape(item)
-            if zt_type: 
-                # Avoid dup with 'x板' tag? 
+            if zt_type:
+                # Avoid dup with 'x板' tag?
                 # append zt_type to tags e.g. "3板/T字"
                 # Need to find existing ZT tag and append logic, or just add independent tag
                 base_tags.append(f"[{zt_type}]")
                 item['limit_up_type'] = zt_type
-                
+
             # --- Call Auction Ratio ---
             # Ratio = CallAmt / YestAmt
             yest_item = yest_full_data.get(code)
@@ -663,7 +754,7 @@ def generate_strategy_pool():
                 y_amt = yest_item.get('amount', 0)
                 if y_amt > 0:
                     call_auc_ratio = call_auc_amt / y_amt
-            
+
             item['call_auction_ratio'] = round(call_auc_ratio, 3)
 
             # 合并列表
@@ -684,13 +775,14 @@ def generate_strategy_pool():
 
             # 再次清理可能产生的双斜杠
             final_tag_str = final_tag_str.replace('//', '/')
-            
+
             # --- 最终 Tag 修正: 确保 焚诀 关键字显眼 ---
-            final_tag_str = final_tag_str.replace("🔥断板反包", "🔥A大焚诀") 
-            # If explicit "🔥A大焚诀" from model, it will be kept. 
-            
-                # If explicit "🔥A大焚诀" from model, it will be kept. 
-            
+            final_tag_str = final_tag_str.replace("🔥断板反包", "🔥A大焚诀")
+            # If explicit "🔥A大焚诀" from model, it will be kept.
+
+            # [新增] 高亮 F佬推荐逻辑
+            final_tag_str = final_tag_str.replace("🎯5日线低吸", "🎯5日线低吸(F佬推荐)")
+
             row = {
                 'sina_code': format_sina(code),
                 'name': name,
@@ -720,14 +812,14 @@ def generate_strategy_pool():
             risk_files = []
         else:
             risk_files = [f for f in os.listdir(input_dir) if f.startswith('risk_') and f.endswith('.csv')]
-        
+
         target_risk_file = None
         if risk_files:
             # Sort by date in filename risk_20260107.csv
             risk_files.sort(reverse=True)
             target_risk_file = os.path.join(input_dir, risk_files[0])
             print(f"   📄 找到文件: {risk_files[0]}")
-        
+
         risk_map = {}
         if target_risk_file:
             try:
@@ -740,19 +832,19 @@ def generate_strategy_pool():
                     name = str(row['股票名称']).strip()
                     # Parse Risk Msg for Values
                     msg = str(row.get('当前累计偏离值', ''))
-                    
+
                     dev_10 = 0.0
                     dev_30 = 0.0
-                    
+
                     # Extract percentage float
                     import re
                     match = re.search(r'(-?\d+\.?\d*)%', msg)
                     val = float(match.group(1)) if match else 0.0
-                    
+
                     rule = str(row.get('监管规则', ''))
                     if '10日' in rule: dev_10 = val
                     if '30日' in rule: dev_30 = val
-                    
+
                     risk_map[name] = {
                         'risk_level': str(row.get('风险等级', '🟢 Safe')),
                         'risk_msg': msg,
@@ -784,18 +876,26 @@ def generate_strategy_pool():
                 p['trigger_next'] = '-'
                 p['deviation_val_10d'] = 0.0
                 p['deviation_val_30d'] = 0.0
-                
+
         print(f"   ✅ 成功匹配 {matches} 只标的风险数据")
-        
+
     except Exception as e:
         print(f"{Fore.RED}⚠️ 风险数据加载异常: {e}")
+
+    # [新增] 市场行情判定
+    phase_info = analyze_market_phase(pool, market_stats)
+    market_stats.update(phase_info)
+
+    print(f"\n{Fore.YELLOW}📊 市场状态判定: {phase_info['phase']}")
+    print(f"   💡 {phase_info['action_guide']}")
+    print(f"   🔥 领涨方向: {phase_info['top_sectors']}")
 
     # --- 5. 导出 ---
     if pool:
         df = pd.DataFrame(pool)
         df.sort_values(by='amount', ascending=False, inplace=True)
 
-        cols = ['sina_code', 'name', 'tag', 'amount', 'today_pct', 'turnover', 'open_pct', 'price', 
+        cols = ['sina_code', 'name', 'tag', 'amount', 'today_pct', 'turnover', 'open_pct', 'price',
                 'risk_level', 'risk_msg', 'trigger_next', 'risk_rule', 'deviation_val_10d', 'deviation_val_30d',
                 'call_auction_ratio', 'last_amount', 'limit_up_type',  # New Cols
                 'pct_10', 'link_dragon', 'vol', 'vol_prev', 'vol_ratio', 'code']
@@ -804,14 +904,14 @@ def generate_strategy_pool():
         df = df[cols]
 
         date_str = datetime.now().strftime("%Y%m%d")
-        
+
         # 改动：直接在 output 目录生成带日期的文件，方便查看
         dated_filename = f'strategy_pool_{date_str}.csv'
         dated_path = os.path.join(OUTPUT_DIR, dated_filename)
         latest_path = os.path.join(OUTPUT_DIR, 'strategy_pool.csv')
 
         df.to_csv(dated_path, index=False, encoding='utf-8-sig')
-        
+
         # 同时复制一份为通用名，供其他脚本读取
         shutil.copyfile(dated_path, latest_path)
 
