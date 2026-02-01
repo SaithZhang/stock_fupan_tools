@@ -1,412 +1,198 @@
 # ==============================================================================
-# 📌 F佬/Bo佬 盘中实时作战指挥室 - 【模块化重构版 v2.5】
-# 核心升级：混合动力模式 (API实时行情 + 本地竞价数据融合)
-# Last Modified: 2026-01-29
+# 🔭 盘中监控雷达 (src/monitors/intraday_monitor.py)
+# Version: 3.0 (Modular Refactor)
+# 核心功能：腾讯源实时监控 + 策略池联动 + 异动刷新
 # ==============================================================================
-import pandas as pd
-import akshare as ak
+
+import time
 import os
 import sys
-import time
-import datetime
-import glob
-import re
-import math
+import pandas as pd
+from datetime import datetime
 from colorama import init, Fore, Style, Back
 
+# --- 环境初始化 ---
+init(autoreset=True)
 if sys.platform == 'win32':
     import io
 
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
-init(autoreset=True)
-
-# ================= ⚙️ 0. 全局配置 =================
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
-sys.path.append(PROJECT_ROOT)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(current_dir))
+sys.path.extend([current_dir, project_root, os.path.join(project_root, 'src')])
 
 try:
-    from src.utils.data_loader import load_holdings, load_pool_full, load_manual_focus
-except ImportError:
-    print(f"{Fore.YELLOW}⚠️ 提示：独立运行模式{Style.RESET_ALL}")
+    from src.config.settings import Config
+    from src.utils.text_tools import TextUtils
+    from src.data.realtime import TencentRealtime
+    from src.strategies.intraday import IntradayStrategy
+except ImportError as e:
+    print(f"{Fore.RED}❌ 模块加载失败: {e}")
+    sys.exit(1)
 
 
-    def load_holdings():
-        return {}
+class IntradayMonitor:
+    def __init__(self):
+        self.strategy_pool = {}  # {sina_code: {tag:..., name:...}}
+        self.holdings = set()
+        self.target_codes = set()
 
+        # 状态快照 {sina_code: last_price} 用于计算异动
+        self.price_snapshot = {}
 
-    def load_pool_full():
-        return {}
+    def load_resources(self):
+        """加载基础数据"""
+        print(f"{Fore.CYAN}📥 正在构建监控池...", end="")
 
+        # 1. 持仓
+        if os.path.exists(Config.HOLDINGS_PATH):
+            raw = TextUtils.load_text_list(Config.HOLDINGS_PATH)
+            for c in raw:
+                sina_c = TextUtils.format_sina_code(c)
+                self.holdings.add(sina_c)
+                self.target_codes.add(sina_c)
 
-    def load_manual_focus():
-        return {}
-
-
-# ================= 🛠️ 1. 工具模块 =================
-class Utils:
-    @staticmethod
-    def str_to_float(val):
-        """强力转换数字"""
-        if val is None: return 0.0
-        if isinstance(val, (float, int)): return 0.0 if math.isnan(val) else float(val)
-        val_str = str(val).strip().replace(',', '')
-        if val_str in ['', '--', 'nan', 'None', 'NaN']: return 0.0
-        if '%' in val_str: return float(val_str.replace('%', ''))
-
-        mult = 1.0
-        if '亿' in val_str:
-            mult = 100000000.0
-            val_str = val_str.replace('亿', '')
-        elif '万' in val_str:
-            mult = 10000.0
-            val_str = val_str.replace('万', '')
-        try:
-            return float(val_str) * mult
-        except:
-            return 0.0
-
-    @staticmethod
-    def format_amount(num):
-        if num is None or num == 0: return "0"
-        try:
-            num = float(num)
-            if num > 100000000:
-                return f"{num / 100000000:.2f}亿"
-            elif num > 10000:
-                return f"{num / 10000:.0f}万"
-            else:
-                return str(int(num))
-        except:
-            return str(num)
-
-    @staticmethod
-    def clean_stock_code(code_raw):
-        code = str(code_raw).strip()
-        digits = re.findall(r'\d+', code)
-        return digits[0].zfill(6) if digits else code
-
-
-# ================= 💾 2. 数据引擎 (核心升级) =================
-class DataEngine:
-
-    @staticmethod
-    def load_local_file(file_path):
-        """读取本地文件（支持UTF8/GBK自动识别）"""
-        print(f"DEBUG: 正在读取文件 -> {file_path}")  # <--- 新增
-        try:
-            df = None
-            encodings = ['utf-8', 'gbk', 'gb18030', 'utf-16']
-
-            # 1. 尝试不同编码读取
-            for enc in encodings:
-                try:
-                    # 尝试 tab 分隔 (同花顺默认)
-                    df = pd.read_csv(file_path, sep='\t', encoding=enc, dtype=str)
-                    if not df.empty and len(df.columns) > 1: break
-                except:
-                    pass
-
-                try:
-                    # 尝试自动分隔 (CSV)
-                    df = pd.read_csv(file_path, sep=None, engine='python', encoding=enc, dtype=str)
-                    if not df.empty and len(df.columns) > 1: break
-                except:
-                    pass
-
-            if df is None and file_path.endswith(('.xlsx', '.xls')):
-                try:
-                    df = pd.read_excel(file_path, dtype=str)
-                except:
-                    pass
-
-            if df is None or df.empty: return None
-
-            # 在 df 读取成功后，列名清洗前，打印原始列名
-            if df is not None:
-                print(f"DEBUG: 原始列名 -> {df.columns.tolist()}")  # <--- 新增
-
-            # 2. 列名清洗
-            df.columns = [str(c).strip().replace('\n', '').replace('\r', '') for c in df.columns]
-
-            # 3. 映射列名
-            mapping = {
-                '代码': ['代码', '证券代码'],
-                '名称': ['名称', '证券名称'],
-                '最新价': ['现价', '最新价', '收盘价'],
-                '涨跌幅': ['涨幅', '涨幅%'],
-                '成交额': ['成交额', '当日成交额', '总金额', '金额'],
-                '成交量': ['成交量', '总手', '总量', 'vol'],
-                '量比': ['量比'],
-                '竞价成交额': ['早盘竞价金额', '竞价金额', '集合竞价', '开盘金额'],
-                '竞价涨幅': ['竞价涨幅%', '开盘涨幅', '竞价涨幅'],
-            }
-
-            rename_dict = {}
-            for std, aliases in mapping.items():
-                for alias in aliases:
-                    if alias in df.columns:
-                        rename_dict[alias] = std
-                        break
-            df = df.rename(columns=rename_dict)
-            print(f"DEBUG: 映射后列名 -> {df.columns.tolist()}")  # <--- 新增
-
-            if '代码' not in df.columns: return None
-
-            df['代码'] = df['代码'].apply(Utils.clean_stock_code)
-
-            # 数值转换
-            for col in ['竞价成交额', '竞价涨幅', '量比', '成交量', '成交额']:
-                if col in df.columns:
-                    df[col] = df[col].apply(Utils.str_to_float)
-
-            return df
-        except:
-            return None
-
-    @staticmethod
-    def get_latest_local_file():
-        """获取最新的本地文件"""
-        intraday_dir = os.path.join(PROJECT_ROOT, "data", "input", "intraday")
-        if not os.path.exists(intraday_dir): os.makedirs(intraday_dir)
-        files = glob.glob(os.path.join(intraday_dir, "*.*"))
-        valid_files = [f for f in files if f.endswith(('.txt', '.xls', '.xlsx', '.csv'))]
-        if not valid_files: return None
-        return max(valid_files, key=os.path.getmtime)
-
-    @staticmethod
-    def fetch_data_hybrid():
-        """【混合模式】API实时行情 + 本地竞价数据融合"""
-
-        # 1. 尝试读取本地文件 (不管API通不通，先读本地作为补充)
-        local_df = None
-        local_path = DataEngine.get_latest_local_file()
-        local_info = ""
-
-        if local_path:
-            local_df = DataEngine.load_local_file(local_path)
-            if local_df is not None:
-                gap = time.time() - os.path.getmtime(local_path)
-                delay_str = f"{gap / 60:.0f}分前" if gap > 60 else "刚刚"
-                local_info = f"📂 本地({delay_str})"
-
-        # 2. 获取 API 实时数据
-        api_df = None
-        source_name = ""
-
-        # 优先东财
-        try:
-            api_df = ak.stock_zh_a_spot_em()
-            if api_df is not None and not api_df.empty:
-                source_name = "🌐 实时(东财)"
-        except:
-            pass
-
-        # 备用新浪
-        if api_df is None:
+        # 2. 策略池
+        pool_path = os.path.join(Config.OUTPUT_DIR, 'strategy_pool.csv')
+        if os.path.exists(pool_path):
             try:
-                api_df = ak.stock_zh_a_spot()
-                if api_df is not None and not api_df.empty:
-                    rename_map = {'symbol': '代码', 'name': '名称', 'trade': '最新价', 'changepercent': '涨跌幅',
-                                  'volume': '成交量', 'amount': '成交额', 'open': '今开', 'high': '最高', 'low': '最低'}
-                    api_df = api_df.rename(columns=rename_map)
-                    api_df['代码'] = api_df['代码'].apply(lambda x: x[2:])
-                    source_name = "🔄 备用(新浪)"
-            except:
+                df = pd.read_csv(pool_path, dtype={'code': str})
+                for _, row in df.iterrows():
+                    sina_c = TextUtils.format_sina_code(str(row['code']).zfill(6))
+
+                    # 简化标签显示
+                    tag = str(row.get('tag', ''))
+                    tag = tag.replace("DDD", "").replace("1进2", "").replace("/", " ").strip()
+
+                    self.strategy_pool[sina_c] = {
+                        'name': str(row.get('name', '')),
+                        'tag': tag[:15],
+                        'limit_days': row.get('limit_days', 0),
+                        'limit_up_type': str(row.get('limit_up_type', ''))
+                    }
+                    self.target_codes.add(sina_c)
+            except Exception:
                 pass
 
-        # 3. 数据融合 (Merge Logic)
-        final_df = None
-        status_str = ""
+        print(f" 完成 | 监控标的: {len(self.target_codes)}")
 
-        if api_df is not None:
-            # 基础是API
-            final_df = api_df
-            status_str = source_name
+    def _format_amt(self, amt):
+        if amt > 1_0000_0000: return f"{amt / 1_0000_0000:.1f}亿"
+        return f"{int(amt / 10000)}万"
 
-            # 如果有本地文件，把本地的 竞价/量比/总手 补进去
-            if local_df is not None:
-                # 建立本地数据字典
-                local_data = local_df.set_index('代码').to_dict('index')
+    def refresh(self):
+        """执行一次刷新"""
+        if not self.target_codes: return
 
-                # 定义需要补全的列
-                cols_to_merge = ['竞价成交额', '竞价涨幅', '量比', '成交量', '总手']
+        # 1. 获取数据
+        df = TencentRealtime.fetch_quotes(list(self.target_codes))
+        if df.empty: return
 
-                for col in cols_to_merge:
-                    if col not in final_df.columns:
-                        final_df[col] = 0.0  # 先初始化
+        display_items = []
+        now_str = datetime.now().strftime("%H:%M:%S")
 
-                # 遍历 API 数据，填补本地数据
-                def fill_data(row):
-                    code = row['代码']
-                    if code in local_data:
-                        src = local_data[code]
-                        # 补全竞价
-                        if row['竞价成交额'] == 0: row['竞价成交额'] = src.get('竞价成交额', 0)
-                        if row['竞价涨幅'] == 0: row['竞价涨幅'] = src.get('竞价涨幅', 0)
-                        # 补全量比 (新浪API通常没有量比)
-                        if row.get('量比', 0) == 0: row['量比'] = src.get('量比', 0)
-                        # 补全成交量 (如果API没返回)
-                        if row.get('成交量', 0) == 0:
-                            row['成交量'] = src.get('成交量', src.get('总手', 0))
-                    return row
+        for _, row in df.iterrows():
+            code = row['sina_code']
+            pool_info = self.strategy_pool.get(code, {'name': row['name'], 'tag': '', 'limit_up_type': ''})
 
-                final_df = final_df.apply(fill_data, axis=1)
-                status_str += f" + {local_info}"
+            # --- 策略判定 ---
+            # A. 涨跌停
+            status_str, is_zt = IntradayStrategy.check_status(
+                row['price'], row['limit_up'], row['limit_down'], row['pct']
+            )
 
-        elif local_df is not None:
-            # API 挂了，完全用本地
-            final_df = local_df
-            status_str = f"{local_info} (纯离线模式)"
+            # B. 动态异动 (对比上一轮)
+            last_p = self.price_snapshot.get(code, 0)
+            dynamic_alert = IntradayStrategy.check_dynamic_alert(row['price'], last_p)
+            self.price_snapshot[code] = row['price']  # 更新快照
 
-        else:
-            return None, "❌ 无数据"
+            # 优先显示异动，其次显示状态
+            final_signal = dynamic_alert if dynamic_alert else status_str
 
-        # 4. 再次清洗数值，防止 nan
-        num_cols = ['最新价', '涨跌幅', '竞价成交额', '竞价涨幅', '量比', '成交量', '成交额']
-        for col in num_cols:
-            if col in final_df.columns:
-                final_df[col] = final_df[col].apply(Utils.str_to_float)
+            # C. 补充连板/一字信息 (来自昨晚复盘)
+            extra_info = ""
+            if pool_info['limit_up_type'] and "一字" in pool_info['limit_up_type']:
+                extra_info = "[一字]"
 
-        return final_df, status_str
+            # 连板数 (从tag提取)
+            import re
+            match = re.search(r'(\d+)板', pool_info['tag'])
+            if match:
+                extra_info += f" {match.group(1)}板"
 
+            # --- 过滤逻辑 (可选) ---
+            # 如果不是持仓，且波动很小，不显示 (防刷屏)
+            is_holding = code in self.holdings
+            is_active = abs(row['pct']) > 3.0 or final_signal or is_zt or (row['vol_ratio'] > 2.0)
 
-# ================= 🧠 3. 策略引擎 =================
-class StrategyEngine:
-    @staticmethod
-    def analyze(row, holding_info, idx_pct):
-        price = row.get('最新价', 0)
-        pct = row.get('涨跌幅', 0)
-        if price == 0: return (0, "", "", 0.0)
+            # if not is_holding and not is_active: continue
 
-        # 核心：计算均价乖离
-        vol = row.get('成交量', 0)
-        amt = row.get('成交额', 0)
+            # --- 样式 ---
+            name_show = pool_info['name']
+            if is_holding:
+                name_show = f"{Fore.MAGENTA}{name_show}{Style.RESET_ALL}"
+                final_signal = f"{Fore.MAGENTA}[持]{Style.RESET_ALL} " + final_signal
 
-        vwap = price
-        if vol > 0:
-            avg_p = amt / vol
-            # 单位修正 (手 vs 股)
-            if avg_p > price * 10:
-                vwap = amt / (vol * 100)
-            else:
-                vwap = avg_p
+            pct_color = IntradayStrategy.get_pct_color(row['pct'])
+            vr_str = f"{row['vol_ratio']:.1f}"
+            if row['vol_ratio'] > 2.0: vr_str = f"{Fore.RED}{vr_str}{Style.RESET_ALL}"
 
-        bias = (price - vwap) / vwap * 100 if vwap > 0 else 0
+            display_items.append({
+                'code': code[-6:],
+                'name': name_show,
+                'pct': row['pct'],
+                'pct_str': f"{pct_color}{row['pct']:>6.2f}%{Style.RESET_ALL}",
+                'price': row['price'],
+                'turnover': row['turnover'],
+                'vr_str': vr_str,
+                'amt_str': self._format_amt(row['amount']),
+                'signal': final_signal,
+                'extra': extra_info,
+                'tag': pool_info['tag'].replace(match.group(0) if match else "", "").strip(),  # 去除板数免重复
+                'sort_key': (is_holding, is_zt, row['pct'])  # 排序优先级
+            })
 
-        # 信号判定
-        signals = []
-        is_limit_up = (pct > 9.8 and price < 30) or (pct > 19.8)
+        # 排序
+        display_items.sort(key=lambda x: x['sort_key'], reverse=True)
 
-        open_p = row.get('今开', price)
-        vr = row.get('量比', 0)
-
-        if is_limit_up: signals.append((10, "🚀涨停封板", Fore.MAGENTA))
-
-        if holding_info:
-            if bias > 4.0 and not is_limit_up: signals.append((8, "🚀急拉卖T", Fore.MAGENTA))
-            if bias < -3.0: signals.append((8, "🌊急杀买T", Fore.CYAN))
-        else:
-            # 弱转强
-            if open_p < vwap and price > vwap and pct > 3.0 and vr > 1.2:
-                signals.append((6, "★弱转强", Fore.RED))
-            # 人气
-            if pct > 8.0 and not is_limit_up:
-                signals.append((7, "🔥人气扫板", Fore.RED))
-
-        if not signals: return (0, "观察", Fore.WHITE, bias)
-        signals.sort(key=lambda x: x[0], reverse=True)
-        return (signals[0][0], signals[0][1], signals[0][2], bias)
-
-
-# ================= 🎨 4. 显示引擎 =================
-class DisplayEngine:
-    @staticmethod
-    def print_dashboard(current_time, source_status, up_cnt, down_cnt):
-        print(f"\n{Back.BLUE}{Fore.WHITE} {current_time} {Style.RESET_ALL} | 📡 {source_status}")
-        print(f"🔥 市场情绪: 涨停 {up_cnt} 家 | 跌停 {down_cnt} 家")
-        print("-" * 130)
-        print(
-            f"{'代码':<7} {'名称':<8} {'涨幅%':<8} {'现价':<8} {'乖离%':<7} {'量比':<6} {'竞价额':<9} {'竞价%':<7} {'信号':<12} {'核心标签'}")
-        print("-" * 130)
-
-    @staticmethod
-    def print_row(item):
-        c_pct = Fore.RED if item['pct'] > 0 else Fore.GREEN
-        c_code = Back.YELLOW + Fore.BLACK if item['is_hold'] else (Back.BLUE + Fore.WHITE if item['is_manual'] else "")
-
-        amt_str = Utils.format_amount(item['call_amt'])
-        tag_disp = str(item['tag']).split('/')[0].replace('F佬', '').strip()[:15]
+        # 清屏并打印
+        os.system('cls' if os.name == 'nt' else 'clear')
 
         print(
-            f"{c_code}{item['code']}{Style.RESET_ALL:<0} "
-            f"{item['name']:<8} "
-            f"{c_pct}{item['pct']:>7.2f}{Style.RESET_ALL} "
-            f"{item['price']:>7.2f} "
-            f"{item['bias']:>7.1f} "
-            f"{item['vr']:>6.1f} "
-            f"{amt_str:<9} "
-            f"{item['call_pct']:>7.2f} "
-            f"{item['sig_color']}{item['sig_text']:<12}{Style.RESET_ALL} "
-            f"{Fore.CYAN}{tag_disp}{Style.RESET_ALL}"
-        )
+            f"{Back.BLUE}{Fore.WHITE} 🔭 盘中监控中心 (V3.0) {Style.RESET_ALL} | Time: {now_str} | 标的: {len(self.target_codes)}")
+        print("-" * 115)
+        print(
+            f"{'代码':<8}{'名称':<14}{'涨幅':<10}{'现价':<8}{'换手%':<8}{'量比':<8}{'成交额':<10}{'异动/状态':<14}{'策略标签'}")
+        print("-" * 115)
 
+        max_rows = 40  # 每屏最多显示多少行
+        for item in display_items[:max_rows]:
+            print(
+                f"{item['code']:<8}"
+                f"{item['name']:<24}"
+                f"{item['pct_str']:<18}"
+                f"{item['price']:<8.2f}"
+                f"{item['turnover']:<8.1f}"
+                f"{item['vr_str']:<17}"
+                f"{item['amt_str']:<10}"
+                f"{item['signal']:<22}"
+                f"{Fore.YELLOW}{item['extra']:<10}{Style.RESET_ALL} {Fore.CYAN}{item['tag']}{Style.RESET_ALL}"
+            )
 
-# ================= 🎮 5. 主程序 =================
-def main():
-    print(f"\n{Back.RED}{Fore.WHITE} F佬 · 作战指挥室 (混合动力版 v2.5) {Style.RESET_ALL}")
+        if len(display_items) > max_rows:
+            print(f"\n... 还有 {len(display_items) - max_rows} 只低波动标的已隐藏 ...")
 
-    holdings = load_holdings()
-    pool_map = load_pool_full()
-    manual_map = load_manual_focus()
-    monitor_codes = set(holdings) | set(pool_map.keys()) | set(manual_map.keys())
-
-    # 获取数据 (自动融合 API + 本地)
-    df, source_status = DataEngine.fetch_data_hybrid()
-
-    if df is None:
-        print(f"\n{Back.RED}{Fore.WHITE} ❌ 无数据来源！ {Style.RESET_ALL}")
-        return
-
-    # 统计
-    up_cnt = len(df[df['涨跌幅'] > 9.8])
-    down_cnt = len(df[df['涨跌幅'] < -9.8])
-
-    # 筛选
-    if len(df) > 1000:
-        df_target = df[df['代码'].isin(monitor_codes)].copy()
-        if df_target.empty:  # 兜底显示涨幅榜
-            df_target = df.sort_values(by='涨跌幅', ascending=False).head(30)
-    else:
-        df_target = df.copy()
-
-    display_list = []
-    for _, row in df_target.iterrows():
-        code = row['代码']
-        holding_info = holdings.get(code)
-
-        sig_level, sig_text, sig_color, bias = StrategyEngine.analyze(row, holding_info, 0)
-
-        display_list.append({
-            'code': code, 'name': row['名称'],
-            'price': row['最新价'], 'pct': row['涨跌幅'],
-            'bias': bias, 'sig_text': sig_text, 'sig_color': sig_color,
-            'is_hold': holding_info is not None, 'is_manual': code in manual_map,
-            'vr': row.get('量比', 0),
-            'call_amt': row.get('竞价成交额', 0),
-            'call_pct': row.get('竞价涨幅', 0),
-            'tag': pool_map.get(code, {}).get('tag', '')
-        })
-
-    display_list.sort(key=lambda x: (not x['is_hold'], not x['is_manual'], -x['pct']))
-
-    DisplayEngine.print_dashboard(datetime.datetime.now().strftime('%H:%M:%S'), source_status, up_cnt, down_cnt)
-    for item in display_list:
-        DisplayEngine.print_row(item)
-    print("=" * 130 + "\n")
+    def run_loop(self):
+        self.load_resources()
+        print("\n🚀 监控启动，按 Ctrl+C 退出...")
+        try:
+            while True:
+                self.refresh()
+                time.sleep(3)  # 3秒刷新一次
+        except KeyboardInterrupt:
+            print("\n👋 监控已停止")
 
 
 if __name__ == "__main__":
-    main()
+    IntradayMonitor().run_loop()
