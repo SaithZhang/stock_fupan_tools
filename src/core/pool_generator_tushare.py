@@ -9,6 +9,7 @@ import sys
 from datetime import datetime
 from colorama import init, Fore
 from typing import List, Dict, Optional
+from src.utils.tushare_client import get_tushare_client
 
 init(autoreset=True)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -66,28 +67,13 @@ class PoolGeneratorV2:
             'lhb_codes': set(), 'seat_map': {}, 'history': {}
         }
         self.top_amount_threshold = 0
-        # 1. 初始化 Tushare (⚠️修改版：适配淘宝代理)
-        try:
-            import tushare as ts
+        # ============================================================
+        # ✨ 模块化调用：一行代码搞定初始化 + 代理注入
+        # ============================================================
+        self.pro = get_tushare_client()
 
-            # --- 👇 把这里换成你买的 Token 和 代理地址 ---
-            # (我也直接把你文件里的填在这里了，方便你直接复制)
-            my_token = "e90040a46bc696bd7c69380ab1c13973bb28eb031d013cf00936b97a323f"
-            my_proxy_url = "http://lianghua.nanyangqiankun.top"
-
-            # 1. 先用 Token 正常初始化
-            self.pro = ts.pro_api(my_token)
-
-            # 2. 🚨【核心步骤】强制修改内部 URL 指向你的代理 🚨
-            # 这一步就是你之前能用的关键，必须加上！
-            self.pro._DataApi__http_url = my_proxy_url
-            self.pro._DataApi__token = my_token  # 既然你之前代码有这行，我们也加上，双重保险
-
-            print(f"{Fore.GREEN}✅ Tushare 接口初始化成功 (已接管代理: {my_proxy_url}){Fore.RESET}")
-
-        except Exception as e:
-            self.pro = None
-            print(f"{Fore.YELLOW}❌ Tushare 初始化失败，横盘筹码策略将失效: {e}{Fore.RESET}")
+        if not self.pro:
+            print(f"{Fore.YELLOW}⚠️ 警告: Tushare Pro 初始化失败，部分策略(筹码/横盘)将自动跳过。{Fore.RESET}")
 
     def load_resources(self) -> bool:
         print(f"{Fore.CYAN}📥 [1/4] Tushare Pro 资源加载 (THS Ultimate)...")
@@ -133,7 +119,8 @@ class PoolGeneratorV2:
             LHBStrategy(self.context['lhb_codes'], self.context['seat_map']),
             TrendStrategy(self.context['history']),
             ReboundStrategy(self.context['broken_pool']),
-            SidewaysChipStrategy(self.market_data.history_map, self.pro),
+            # 将 self.market_data.history_map 改为 self.context['history']
+            SidewaysChipStrategy(self.context['history'], self.pro),
             DDDStrategy()
         ]
         return True
@@ -282,16 +269,26 @@ class PoolGeneratorV2:
         if not pool: return
         df = pd.DataFrame(pool)
         df.sort_values(by='amount', ascending=False, inplace=True)
-        date_str = datetime.now().strftime("%Y%m%d")
-        path = os.path.join(Config.OUTPUT_DIR, f'strategy_pool_v2_{date_str}.csv')
 
-        cols = ['sina_code', 'name', 'tag', 'amount', 'today_pct', 'turnover', 'risk_level']
+        # 补全必要字段，防止报错
+        cols = ['sina_code', 'name', 'tag', 'amount', 'today_pct', 'turnover', 'risk_level', 'limit_up_type',
+                'limit_days']
         for c in cols:
             if c not in df.columns: df[c] = ""
 
-        df.to_csv(path, index=False, encoding='utf-8-sig')
-        print(f"\n{Fore.GREEN}🎉 V2.5 复盘完成！生成标的: {len(pool)} 只")
-        print(f"📄 文件路径: {path}")
+        date_str = datetime.now().strftime("%Y%m%d")
+
+        # 1. 保存带日期的版本 (对应 call_auction_screener.py 的需求)
+        path_dated = os.path.join(Config.OUTPUT_DIR, f'strategy_pool_v2_{date_str}.csv')
+        df.to_csv(path_dated, index=False, encoding='utf-8-sig')
+
+        # 2. 保存通用版本 (覆盖旧文件，对应 intraday_monitor.py 的需求)
+        path_latest = os.path.join(Config.OUTPUT_DIR, 'strategy_pool.csv')
+        df.to_csv(path_latest, index=False, encoding='utf-8-sig')
+
+        print(f"\n{Fore.GREEN}🎉 复盘完成！生成标的: {len(pool)} 只")
+        print(f"📄 [历史] 竞价文件: {path_dated}")
+        print(f"📄 [最新] 监控文件: {path_latest}")
 
     def _print_market_summary(self, phase_info, pool_size):
         print(f"\n{Fore.YELLOW}📊 市场: {phase_info['phase']} | 建议: {phase_info['action_guide']}")

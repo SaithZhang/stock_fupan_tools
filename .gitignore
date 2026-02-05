@@ -29,3 +29,6 @@ user_data/
 debug_*.py
 inspect_*.py
 verify*.txt
+
+# serect files
+src/config/secrets.py

@@ -117,25 +117,48 @@ class IntradayMonitor:
         if amt > 1_0000_0000: return f"{amt / 1_0000_0000:.1f}亿"
         return f"{int(amt / 10000)}万"
 
-    # ⬇️ 更新 fetch_all_data 方法
     def fetch_all_data(self):
         """并发获取：个股数据、大盘指数、板块数据"""
+        # 1. 实例化工具类 (关键修复：必须实例化才能调用方法)
+        tr = TencentRealtime()
+        emb = EastMoneyBlock()
+
         # 定义大盘指数代码
         indices_codes = ['sh000001', 'sz399001', 'sz399006', 'sh000688', 'sh000300']
 
+        # 2. 提交任务 (使用实例方法)
         tasks = {
-            'stocks': self.executor.submit(TencentRealtime.fetch_quotes, list(self.target_codes)),
-            'indices': self.executor.submit(TencentRealtime.fetch_quotes, indices_codes),
-            # ⬇️ 直接调用新类的方法
-            'sectors': self.executor.submit(EastMoneyBlock.fetch_all_sectors)
+            # 注意：这里调用的是 tr.get_batch_quotes 而不是 fetch_quotes
+            'stocks': self.executor.submit(tr.get_batch_quotes, list(self.target_codes)),
+            'indices': self.executor.submit(tr.get_batch_quotes, indices_codes),
+            'sectors': self.executor.submit(emb.fetch_all_sectors)
         }
 
         results = {}
         for key, future in tasks.items():
             try:
                 results[key] = future.result()
-            except Exception:
+            except Exception as e:
+                # 打印错误细节，方便排查板块加载问题
+                print(f"\n{Fore.RED}❌ 数据异常 [{key}]: {e}")
                 results[key] = None
+
+        # 3. 数据转换与字段对齐 (修复 KeyError: 'vol_ratio')
+        if results.get('stocks'):
+            # 将字典转换为 DataFrame
+            df = pd.DataFrame.from_dict(results['stocks'], orient='index')
+
+            # 关键修复：如果存在 'vr' 列，重命名为 'vol_ratio' 以匹配后续逻辑
+            if 'vr' in df.columns:
+                df.rename(columns={'vr': 'vol_ratio'}, inplace=True)
+
+            # 确保 sina_code 存在
+            df['sina_code'] = df.index
+            results['stocks'] = df
+
+        if results.get('indices'):
+            results['indices'] = pd.DataFrame.from_dict(results['indices'], orient='index')
+
         return results
 
     def print_dashboard(self, indices_df, sectors_list, now_str):
