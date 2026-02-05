@@ -28,7 +28,7 @@ class SystemDataLoader:
 
     @staticmethod
     def load_yesterday_pool() -> Dict[str, Dict]:
-        """加载最近一期的策略池寻找昨日炸板股"""
+        """加载最近一期的策略池 (兼容 v2 和旧格式)"""
         if not os.path.exists(Config.OUTPUT_DIR): return {}
 
         files = []
@@ -38,13 +38,22 @@ class SystemDataLoader:
         for d in [Config.OUTPUT_DIR, Config.ARCHIVE_DIR]:
             if not os.path.exists(d): continue
             for f in os.listdir(d):
-                if f.startswith('strategy_pool_') and f.endswith('.csv'):
-                    date_part = f.replace('strategy_pool_', '').replace('.csv', '')
-                    if date_part.isdigit() and date_part < today_str:
+                # 1. 基础过滤：必须是 csv 且包含 strategy_pool
+                if not (f.startswith('strategy_pool') and f.endswith('.csv')):
+                    continue
+
+                # 2. 正则提取日期 (兼容 strategy_pool_2026... 和 strategy_pool_v2_2026...)
+                # 寻找文件名中的连续8位数字
+                match = re.search(r'(\d{8})', f)
+                if match:
+                    date_part = match.group(1)
+                    # 确保是过去的文件
+                    if date_part < today_str:
                         files.append({'path': os.path.join(d, f), 'date': date_part})
 
         if not files:
-            print(f"{Fore.YELLOW}⚠️ 未找到昨日(或更早)的策略池文件，无法执行[断板反包]策略")
+            # 只有当真的找不到文件时才警告（静默失败通常是因为是假期或第一天）
+            # print(f"{Fore.YELLOW}⚠️ 未找到昨日(或更早)的策略池文件...")
             return {}
 
         # 按日期倒序，取最近一份
@@ -54,9 +63,14 @@ class SystemDataLoader:
 
         res_map = {}
         try:
-            df = pd.read_csv(target_file, dtype={'code': str})
+            df = pd.read_csv(target_file, dtype={'code': str, 'sina_code': str})
             for _, row in df.iterrows():
-                c = str(row['code']).zfill(6)
+                # 兼容 sina_code 和 code 字段
+                c = str(row.get('code', '')).zfill(6)
+                if not c or c == '000000':
+                    raw_sina = str(row.get('sina_code', ''))
+                    c = raw_sina[-6:] if len(raw_sina) >= 6 else ''
+
                 tag = str(row.get('tag', ''))
                 if "炸板" in tag:
                     res_map[c] = {'amount': float(row.get('amount', 0)), 'tag': tag}

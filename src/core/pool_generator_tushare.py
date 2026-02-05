@@ -1,27 +1,40 @@
 # ==============================================================================
-# 🏭 策略工厂 V2.5 (src/core/pool_generator_v2.py)
-# Version: 2.5 (THS Concept Integration)
+# 🏭 策略工厂 V2.6 (src/core/pool_generator_tushare.py)
+# Version: 2.6 (Modular Refactoring: Tagger/Exporter/DateUtils)
 # ==============================================================================
 
-import pandas as pd
 import os
 import sys
-from datetime import datetime
 from colorama import init, Fore
 from typing import List, Dict, Optional
-from src.utils.tushare_client import get_tushare_client
 
+# 初始化颜色输出
 init(autoreset=True)
+
+# 路径设置
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
 sys.path.extend([current_dir, project_root, os.path.join(project_root, 'src')])
 
 try:
+    # ------------------- 核心模块导入 -------------------
     from src.config.settings import Config
     from src.utils.text_tools import TextUtils
-    from src.data.market import MarketAnalyzer, TechnicalAnalyzer
+    from src.data.market import MarketAnalyzer
+    from src.data.tushare_manager import TushareManager
+    from src.data.loader import SystemDataLoader
 
-    # 兼容导入 market_data
+    # ✨ 新增模块化组件导入
+    from src.core.stock_tagger import StockTagger  # 负责打标逻辑
+    from src.data.exporter import ResultExporter  # 负责导出 CSV
+    from src.utils.date_tools import DateUtils  # 负责智能日期
+
+    # ------------------- 策略模块导入 -------------------
+    from src.strategies.base import BaseStrategy
+    from src.strategies.sentiment import IdentityStrategy, LHBStrategy
+    from src.strategies.technical import TrendStrategy, ReboundStrategy, DDDStrategy, SidewaysChipStrategy
+
+    # 兼容性导入 MarketDataManager
     try:
         from market_data import MarketDataManager
     except ImportError:
@@ -37,12 +50,7 @@ try:
 
                 def get_summary(self): return {}
 
-    from src.strategies.base import BaseStrategy
-    from src.strategies.sentiment import IdentityStrategy, LHBStrategy
-    from src.strategies.technical import TrendStrategy, ReboundStrategy, DDDStrategy, SidewaysChipStrategy
-    from src.data.tushare_manager import TushareManager
-    from src.data.loader import SystemDataLoader
-
+    # 兼容性导入 load_ths_history
     try:
         from src.strategies.f_lao_model import load_ths_history
     except ImportError:
@@ -67,39 +75,39 @@ class PoolGeneratorV2:
             'lhb_codes': set(), 'seat_map': {}, 'history': {}
         }
         self.top_amount_threshold = 0
-        # ============================================================
-        # ✨ 模块化调用：一行代码搞定初始化 + 代理注入
-        # ============================================================
-        self.pro = get_tushare_client()
 
+        # 直接复用 TushareManager 的连接
+        self.pro = self.ts_driver.pro
         if not self.pro:
-            print(f"{Fore.YELLOW}⚠️ 警告: Tushare Pro 初始化失败，部分策略(筹码/横盘)将自动跳过。{Fore.RESET}")
+            print(f"{Fore.YELLOW}⚠️ 警告: Tushare Pro 初始化失败，部分策略将自动跳过。")
 
     def load_resources(self) -> bool:
         print(f"{Fore.CYAN}📥 [1/4] Tushare Pro 资源加载 (THS Ultimate)...")
-        target_date = self.ts_driver.get_trading_date()
-        print(f"   📅 目标日期: {target_date}")
 
-        # 1. 拉取数据 (含同花顺涨停/概念/炸板)
+        # ✅ 使用工具类获取智能日期 (自动处理盘中/盘后/周末/节假日)
+        target_date = DateUtils.get_smart_trading_date(self.pro)
+        print(f"   📅 锁定复盘日期: {Fore.YELLOW}{target_date}{Fore.RESET}")
+
+        # 1. 拉取数据
         self.all_data = self.ts_driver.fetch_daily_snapshot(target_date)
         if not self.all_data:
-            print(f"{Fore.RED}❌ 无数据返回")
+            print(f"{Fore.RED}❌ 无数据返回 (日期: {target_date})")
             return False
 
-        # 人气门槛计算
+        # 2. 计算人气门槛 (Top50 成交额)
         amounts = sorted([x['amount'] for x in self.all_data], reverse=True)
         if len(amounts) > 50:
             self.top_amount_threshold = amounts[50]
             print(f"   💰 人气股门槛(Top50): {self.top_amount_threshold / 100000000:.1f} 亿")
 
-        # 2. 加载本地配置
+        # 3. 加载本地配置
         self.context['holdings'] = TextUtils.load_text_list(Config.HOLDINGS_PATH)
         self.context['f_lao'] = TextUtils.load_text_list(Config.F_LAO_PATH)
         self.context['manual'] = TextUtils.load_text_list(Config.MANUAL_FOCUS_PATH)
         self.context['broken_pool'] = SystemDataLoader.load_yesterday_pool()
         self.risk_map = SystemDataLoader.load_risk_data()
 
-        # 3. 大盘与龙虎榜
+        # 4. 加载大盘与龙虎榜
         self.md_manager = MarketDataManager(Config.DAPAN_DIR)
         self.md_manager.load_data()
 
@@ -110,16 +118,15 @@ class PoolGeneratorV2:
         _, local_seat_map = SystemDataLoader.load_lhb_info()
         self.context['seat_map'] = local_seat_map
 
-        # 4. 历史K线
+        # 5. 加载历史K线 (用于趋势策略)
         self.context['history'] = load_ths_history(Config.THS_DIR, days=30)
 
-        # 5. 策略初始化
+        # 6. 初始化所有策略
         self.strategies = [
             IdentityStrategy(self.context['holdings'], self.context['f_lao'], self.context['manual']),
             LHBStrategy(self.context['lhb_codes'], self.context['seat_map']),
             TrendStrategy(self.context['history']),
             ReboundStrategy(self.context['broken_pool']),
-            # 将 self.market_data.history_map 改为 self.context['history']
             SidewaysChipStrategy(self.context['history'], self.pro),
             DDDStrategy()
         ]
@@ -128,120 +135,57 @@ class PoolGeneratorV2:
     def run_pipeline(self):
         if not self.load_resources(): return
 
-        print(f"{Fore.CYAN}⚙️ [2/4] 执行策略 (V2.5)...")
+        print(f"{Fore.CYAN}⚙️ [2/4] 执行策略 (V2.6)...")
+
+        # ✨ 初始化业务逻辑打标器
+        tagger = StockTagger(self.top_amount_threshold)
+
         market_stats = MarketAnalyzer.calculate_stats(self.all_data, self.yest_full_data)
         if self.md_manager: self.md_manager.update_extra_stats(market_stats)
 
         results_pool = []
         for item in self.all_data:
-            processed_item = self._process_single_item(item)
+            # ✨ 核心处理逻辑委托给 process_single_item，并传入 tagger
+            processed_item = self._process_single_item(item, tagger)
             if processed_item: results_pool.append(processed_item)
 
+        # 补充风险数据
         self._enrich_risk_data(results_pool)
+
+        # 市场情绪阶段分析
         phase_info = MarketAnalyzer.analyze_phase(results_pool, market_stats)
-        market_stats.update(phase_info)
-
         self._print_market_summary(phase_info, len(results_pool))
-        self._export_data(results_pool, market_stats)
 
-    def _process_single_item(self, item: Dict) -> Optional[Dict]:
+        # ✨ 导出逻辑完全委托给 Exporter
+        ResultExporter.export_pool(results_pool)
+
+    def _process_single_item(self, item: Dict, tagger: StockTagger) -> Optional[Dict]:
         """
-        处理单只股票逻辑 (V2.5 修复版)
-        修正：收紧入池标准，防止仅因竞价达标而导致标的过多
+        处理单只股票：
+        1. 运行所有策略获取策略标签。
+        2. 调用 StockTagger 获取综合标签 (含竞价、形态、人气等)。
+        3. 组装最终数据格式。
         """
         code = item['code']
-        name = item['name']
-        if 'ST' in name.upper(): return None
+        if 'ST' in item['name'].upper(): return None
 
-        hit_tags = []
-        has_strategy_hit = False
-
-        # 1. 运行所有基础策略 (趋势、龙虎榜、持仓、反包等)
-        # 如果命中了这些策略，has_strategy_hit 会置为 True
+        # 1. 运行策略集合
+        strategies_hit_tags = []
         for strategy in self.strategies:
             tags = strategy.run(item)
-            if tags:
-                hit_tags.extend(tags)
-                has_strategy_hit = True
+            if tags: strategies_hit_tags.extend(tags)
 
-        # A. 涨停连板标签
-        if item.get('is_zt'):
-            limit_days = item.get('limit_days', 1)
-            zt_tag = f"{limit_days}板"
-            hit_tags.append(zt_tag)
+        # 2. 调用打标器获取综合标签 ✨
+        final_tag_str, is_selected, zt_type = tagger.get_tags(item, strategies_hit_tags)
 
-        # B. 同花顺概念融合
-        ths_desc = item.get('ths_desc', '')
-        if ths_desc:
-            concepts = ths_desc.split('+')
-            cleaned_concepts = "/".join(concepts[:2])
-            hit_tags.append(cleaned_concepts)
+        # 未入选则直接返回
+        if not is_selected: return None
 
-        # C. 实时炸板识别
-        if item.get('is_broken'):
-            hit_tags.append("💣炸板")
-
-        # === D. 竞价逻辑分析 (辅助打标，不作为独立入池标准) ===
+        # 3. 组装返回数据
         auc_ratio = item.get('auction_ratio', 0.0)
-        auc_amt = item.get('auc_amt', 0)
-        is_zt = item.get('is_zt', False)
-
-        # 1. 竞价爆量标签
-        if auc_ratio >= 0.10:
-            hit_tags.append("🔥竞价超预期")  # >10%
-        elif auc_ratio >= 0.05:
-            hit_tags.append("⚡竞价达标")  # >5%
-
-        # 2. 竞价金额过亿 (大资金战场)
-        if auc_amt > 100000000:  # 1亿
-            hit_tags.append("💰竞价过亿")
-
-        # 3. 弱转强判定 (买点逻辑：竞价强 + 最终涨停)
-        if auc_ratio >= 0.05 and is_zt:
-            hit_tags.append("🎯疑似弱转强")
-
-        # E. 人气/容量兜底
-        is_capacity_stock = (item['amount'] > self.top_amount_threshold) and (item['today_pct'] > 0)
-        if is_capacity_stock:
-            hit_tags.append("★人气/容量")
-
-        # === 核心筛选逻辑 (收紧标准) ===
-        is_selected = False
-
-        # 标准1: 涨停股 (必须入池)
-        if item.get('limit_days', 0) >= 1 or is_zt:
-            is_selected = True
-
-        # 标准2: 炸板股 (关注后续反包)
-        if item.get('is_broken'):
-            is_selected = True
-
-        # 标准3: 策略命中 (龙虎榜、趋势、持仓等)
-        # 注意：这里利用 has_strategy_hit 标志，排除了仅有竞价tag的情况
-        if has_strategy_hit:
-            is_selected = True
-
-        # 标准4: 人气/容量核心
-        if is_capacity_stock:
-            is_selected = True
-
-        # 如果不满足以上任一条件，直接过滤 (解决标的过多的问题)
-        if not is_selected:
-            return None
-
-        # F. 补充本地概念与形态 (仅对入池标的执行，节省性能)
-        local_concepts = TextUtils.get_core_concepts_local(name, str(item.get('tag', '')))
-        if local_concepts: hit_tags.append(local_concepts)
-
-        shape_tags, zt_type = TechnicalAnalyzer.check_special_shape(item)
-        if zt_type: hit_tags.append(f"[{zt_type}]")
-        hit_tags.extend(shape_tags)
-
-        final_tag_str = "/".join(sorted(list(set(hit_tags)))).replace('//', '/')
-
         return {
             'sina_code': item['sina_code'],
-            'name': name,
+            'name': item['name'],
             'tag': final_tag_str,
             'amount': item.get('amount', 0),
             'last_amount': 0,
@@ -254,7 +198,6 @@ class PoolGeneratorV2:
             'vol': item.get('vol', 0),
             'vol_ratio': item.get('vol_ratio', 0),
             'code': code,
-            # 导出百分比格式，方便在表格中查看 (如 5.23 代表 5.23%)
             'call_auction_ratio': round(auc_ratio * 100, 2),
             'limit_up_type': zt_type,
             'risk_level': 'N/A'
@@ -264,31 +207,6 @@ class PoolGeneratorV2:
         for p in pool:
             info = self.risk_map.get(p['name'], {'risk_level': '🟢 Safe'})
             p.update(info)
-
-    def _export_data(self, pool, market_stats):
-        if not pool: return
-        df = pd.DataFrame(pool)
-        df.sort_values(by='amount', ascending=False, inplace=True)
-
-        # 补全必要字段，防止报错
-        cols = ['sina_code', 'name', 'tag', 'amount', 'today_pct', 'turnover', 'risk_level', 'limit_up_type',
-                'limit_days']
-        for c in cols:
-            if c not in df.columns: df[c] = ""
-
-        date_str = datetime.now().strftime("%Y%m%d")
-
-        # 1. 保存带日期的版本 (对应 call_auction_screener.py 的需求)
-        path_dated = os.path.join(Config.OUTPUT_DIR, f'strategy_pool_v2_{date_str}.csv')
-        df.to_csv(path_dated, index=False, encoding='utf-8-sig')
-
-        # 2. 保存通用版本 (覆盖旧文件，对应 intraday_monitor.py 的需求)
-        path_latest = os.path.join(Config.OUTPUT_DIR, 'strategy_pool.csv')
-        df.to_csv(path_latest, index=False, encoding='utf-8-sig')
-
-        print(f"\n{Fore.GREEN}🎉 复盘完成！生成标的: {len(pool)} 只")
-        print(f"📄 [历史] 竞价文件: {path_dated}")
-        print(f"📄 [最新] 监控文件: {path_latest}")
 
     def _print_market_summary(self, phase_info, pool_size):
         print(f"\n{Fore.YELLOW}📊 市场: {phase_info['phase']} | 建议: {phase_info['action_guide']}")

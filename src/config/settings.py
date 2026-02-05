@@ -18,6 +18,7 @@ class Config:
     OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'data', 'output')
     ARCHIVE_DIR = os.path.join(OUTPUT_DIR, 'archive')
     INPUT_DIR = os.path.join(PROJECT_ROOT, 'data', 'input')
+    CALL_AUCTION_DIR = os.path.join(INPUT_DIR, 'call_auction')
 
     # 具体文件路径
     HOLDINGS_PATH = os.path.join(INPUT_DIR, 'holdings.txt')
