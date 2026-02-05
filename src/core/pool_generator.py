@@ -160,7 +160,7 @@ class PoolGenerator:
         # (这部分逻辑简单且通用，保留在主流程或单独的 BasicStrategy 均可，此处保留在主流程)
         is_zt = item.get('is_zt') or (item.get('today_pct', 0) >= 9.8)
         if is_zt:
-            limit_days = item.get('limit_days', 0) + 1
+            limit_days = item.get('limit_days', 0)
             zt_tag = f"{limit_days}板" + ("/回封" if item.get('open_num', 0) > 0 else "")
             hit_tags.append(zt_tag)
 
