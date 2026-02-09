@@ -8,57 +8,49 @@ class DateUtils:
     @staticmethod
     def get_smart_trading_date(tushare_client):
         """
-        📅 智能交易日期获取 (静态工具方法)
-
-        Args:
-            tushare_client: Tushare Pro 接口客户端 (pro = ts.pro_api())
-
-        Returns:
-            str: 格式化的日期字符串 'YYYYMMDD'
+        📅 智能交易日期获取 (去依赖版)
+        优先使用本地逻辑判断工作日，仅用 Tushare 校验。
         """
         now = datetime.now()
 
-        # 1. 判定基准日期: 下午4点前取昨天，4点后取当天
+        # 1. 初始基准: 下午4点前取昨天，4点后取当天
         if now.hour < 16:
             base_date = now - timedelta(days=1)
         else:
             base_date = now
 
+        # 2. 📅 本地周末处理 (核心修复)
+        # weekday(): 0=周一 ... 5=周六, 6=周日
+        # 如果是周六(5)，退回周五(减1天)
+        # 如果是周日(6)，退回周五(减2天)
+        if base_date.weekday() == 5:
+            print(f"{Fore.YELLOW}📅 检测到基准日是周六，自动回溯到周五...")
+            base_date -= timedelta(days=1)
+        elif base_date.weekday() == 6:
+            print(f"{Fore.YELLOW}📅 检测到基准日是周日，自动回溯到周五...")
+            base_date -= timedelta(days=2)
+
         base_date_str = base_date.strftime('%Y%m%d')
-        # 往前查 30 天，确保覆盖长假
-        start_date_str = (base_date - timedelta(days=30)).strftime('%Y%m%d')
+        print(f"{Fore.CYAN}🕒 [DateUtils] 智能锁定日期: {base_date_str} (周{base_date.weekday() + 1})")
 
-        print(f"{Fore.CYAN}🕒 [DateUtils] 系统时间: {now.strftime('%H:%M')} | 基准检测日期: {base_date_str}")
+        # 3. 尝试用 Tushare 校验 (仅作参考，失败也不怕)
+        if tushare_client:
+            try:
+                # 查一下日历，以此判断是不是节假日(非周末的假期)
+                # 往前多查几天，防止代理数据滞后导致查不到
+                start_check = (base_date - timedelta(days=10)).strftime('%Y%m%d')
+                df_cal = tushare_client.trade_cal(exchange='', start_date=start_check, end_date=base_date_str,
+                                                  is_open='1')
 
-        if not tushare_client:
-            print(f"{Fore.RED}⚠️ Tushare 客户端未初始化，强制使用基准日期")
-            return base_date_str
+                if not df_cal.empty:
+                    last_open = df_cal.iloc[-1]['cal_date']
+                    # 只有当接口返回的日期很新(7天内)且不等于我们算的日期时，才采纳接口
+                    # 这样规避了代理日历滞后(30天前)的问题
+                    last_open_dt = datetime.strptime(last_open, "%Y%m%d")
+                    if (base_date - last_open_dt).days < 7 and last_open != base_date_str:
+                        print(f"{Fore.YELLOW}📅 修正: 依据日历调整为 {last_open}")
+                        return last_open
+            except Exception:
+                pass  # 接口挂了就忽略，用本地算的
 
-        try:
-            # 2. 查询交易日历
-            # is_open='1' 代表开盘
-            df_cal = tushare_client.trade_cal(exchange='', start_date=start_date_str, end_date=base_date_str,
-                                              is_open='1')
-
-            if not df_cal.empty:
-                target_date = df_cal.iloc[-1]['cal_date']  # 取日历中最后一个交易日
-
-                # 3. 🛡️ 数据新鲜度防御检查
-                # 防止因为 Tushare 接口或本地数据未更新，导致回退到很久以前的日期
-                target_dt = datetime.strptime(target_date, "%Y%m%d")
-                days_diff = (base_date - target_dt).days
-
-                if days_diff > 7:
-                    print(f"{Fore.YELLOW}⚠️ 警告: 接口返回的最新交易日 ({target_date}) 距今已 {days_diff} 天。")
-                    print(f"{Fore.YELLOW}👉 可能原因: Tushare/代理数据未更新。")
-                    print(f"{Fore.GREEN}🛡️ 启动防御措施: 强制使用基准日期 {base_date_str}")
-                    return base_date_str
-
-                return target_date
-            else:
-                print(f"{Fore.RED}⚠️ 未找到交易日历数据，强制使用基准日期")
-                return base_date_str
-
-        except Exception as e:
-            print(f"{Fore.RED}⚠️ 日历接口请求失败，降级使用基准日期: {e}")
-            return base_date_str
+        return base_date_str
