@@ -1,100 +1,40 @@
 # ==============================================================================
-# 🧠 情绪与身份策略 (src/strategies/sentiment.py)
-# 包含：持仓监控、F佬作业跟随、龙虎榜席位分析、人工重点关注
+# 🎭 情绪面策略集合 (src/strategies/sentiment.py)
 # ==============================================================================
-
-from typing import Dict, List, Set
-from .base import BaseStrategy
-
-# 引入工具
-try:
-    from src.config.settings import Config
-    from src.utils.text_tools import TextUtils
-except ImportError:
-    pass  # 忽略IDE报错，运行时路径通常正常
+from typing import List, Union
+from src.core.domain import Stock
+from src.strategies.interface import Strategy
 
 
-class IdentityStrategy(BaseStrategy):
+class IdentityStrategy(Strategy):
     """
-    身份识别策略：负责标记 持仓股、F佬作业、人工关注股
+    【玄学/名字策略】
+    逻辑：检测名字中是否包含特定关键字（如：龙、中、华、科技等）。
     """
 
-    def __init__(self, holdings_map: Dict, f_lao_map: Dict, manual_map: Dict):
-        self.holdings_map = holdings_map
-        self.f_lao_map = f_lao_map
-        self.manual_map = manual_map
+    def run(self, stock: Union[Stock, dict]) -> List[str]:
+        name = self.get_str(stock, 'name')
+        labels = []
 
-    def run(self, item: Dict) -> List[str]:
-        tags = []
-        code = item['code']
-        name = item['name']
-        is_zt = item.get('is_zt', False)
+        keywords = ['龙', '凤', '中', '华', '国', 'AI']
+        for kw in keywords:
+            if kw in name:
+                labels.append(f"🐉玄学:{kw}")
 
-        # 1. 优先处理 Config 中的特殊配置
-        if code in Config.HOLDING_STRATEGIES:
-            tags.append(Config.HOLDING_STRATEGIES[code][0])
-            return tags  # 特殊配置通常覆盖其他
-
-        # 2. 持仓标记
-        if code in self.holdings_map:
-            tags.append(f"持仓/{name}")
-
-        # 3. F佬作业标记
-        elif code in self.f_lao_map:
-            raw_note = self.f_lao_map[code]
-            # 调用工具类清洗标签
-            cleaned_note = TextUtils.clean_manual_tag(raw_note, is_zt)
-            final_manual = f"F佬/{cleaned_note}" if cleaned_note != "关注" else "F佬/关注"
-            tags.append(final_manual)
-
-        # 4. 人工关注/人气股
-        # (原逻辑：limit_days>=3 或 成交额>20亿 或 在manual_map中)
-        is_popular = False
-        pop_reasons = []
-
-        if code in self.manual_map or name in self.manual_map:
-            is_popular = True
-
-        if item.get('limit_days', 0) >= 3:
-            is_popular = True
-
-        if item.get('amount', 0) >= 20_0000_0000:  # 20亿
-            is_popular = True
-            pop_reasons.append("成交")
-
-        if is_popular:
-            tags.append("★人气")
-            if pop_reasons: tags.extend(pop_reasons)
-
-        return tags
+        return labels
 
 
-class LHBStrategy(BaseStrategy):
+class LHBStrategy(Strategy):
     """
-    龙虎榜策略：负责标记上榜个股及知名游资动作
+    【龙虎榜策略】
+    逻辑：检测是否有龙虎榜数据（需要 fetcher 提前注入 has_lhb 字段）。
     """
 
-    def __init__(self, lhb_codes: Set[str], seat_map: Dict[str, Set[str]]):
-        self.lhb_codes = lhb_codes
-        self.seat_map = seat_map
+    def run(self, stock: Union[Stock, dict]) -> List[str]:
+        # 假设 fetcher 里如果上榜，会标记 is_lhb=True 或存入 lhb_info
+        # 这里做个兼容判断
+        is_lhb = getattr(stock, 'is_lhb', False) or self.get_str(stock, 'lhb_date') != ""
 
-    def run(self, item: Dict) -> List[str]:
-        tags = []
-        code = item['code']
-        name = item['name']
-
-        if code in self.lhb_codes:
-            tags.append("🐉龙虎榜")
-
-        if name in self.seat_map:
-            # 排序逻辑：锁仓/加仓 -> 买入 -> 卖出 -> 其他
-            def tag_sort(t):
-                if t.startswith(("🔒", "➕")): return 0
-                if t.startswith("💰"): return 1
-                if t.startswith("🏃"): return 2
-                return 3
-
-            seats = sorted(list(self.seat_map[name]), key=tag_sort)
-            tags.extend(seats)
-
-        return tags
+        if is_lhb:
+            return ["🐯龙虎榜"]
+        return []

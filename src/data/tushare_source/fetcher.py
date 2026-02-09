@@ -45,8 +45,15 @@ class TushareFetcher:
             ths_stats, df_ths_zt = self.fetch_ths_limit_stats(date_str)
             print(" ✅")
 
-            # 5. 合并与清洗
-            print(f"   └── [5/5] 数据合并与对象化...", end="", flush=True)
+            # [新增步骤] 5. 获取全市场筹码数据 (一次性拉取，极速)
+            print(f"   ├── [5/6] 获取全市场筹码分布...", end="", flush=True)
+            df_chips = self.fetch_cyq_perf_full(date_str)
+            # 转为字典以便 O(1) 查找: { '000001.SZ': {'winner_rate': 90, ...} }
+            chip_map = df_chips.set_index('ts_code').to_dict('index') if not df_chips.empty else {}
+            print(f" ✅ (获取 {len(df_chips)} 条)")
+
+            # 6. 合并与清洗 (原步骤5顺延)
+            print(f"   └── [6/6] 数据合并与对象化...", end="", flush=True)
 
             df_merge = pd.merge(df_daily, df_basic, on='ts_code', how='left')
             if not df_prev.empty:
@@ -150,6 +157,14 @@ class TushareFetcher:
                     ths_desc=ths_desc,
                     is_broken=(full_code in zb_codes)
                 )
+                # --- 💉 注入筹码数据 ---
+                if full_code in chip_map:
+                    data = chip_map[full_code]
+                    s.winner_rate = float(data.get('winner_rate', 0))
+                    s.cost_5pct = float(data.get('cost_5pct', 0))
+                    s.cost_95pct = float(data.get('cost_95pct', 0))
+                    s.weight_avg = float(data.get('weight_avg', 0))
+
                 stock_list.append(s)
 
             print(" ✅")
@@ -260,3 +275,65 @@ class TushareFetcher:
             return df.set_index('ts_code')['name'].to_dict()
         except:
             return {}
+
+    def fetch_cyq_perf(self, ts_code=None, trade_date=None):
+        """
+        获取每日筹码平均成本和胜率 (cyq_perf)
+        用途：识别筹码密集区间、计算当前获利盘比例
+        """
+        if not self.pro: return pd.DataFrame()
+        try:
+            # 接口文档：获取A股每日筹码平均成本和胜率情况
+            df = self.pro.cyq_perf(ts_code=ts_code, trade_date=trade_date)
+            return df
+        except Exception as e:
+            print(f" {Fore.RED}⚠️ 筹码胜率数据获取失败: {e}")
+            return pd.DataFrame()
+
+    def fetch_cyq_chips(self, ts_code, trade_date=None):
+        """
+        获取每日筹码分布情况 (cyq_chips)
+        用途：绘制筹码分布图，寻找支撑位和压力位
+        """
+        if not self.pro: return pd.DataFrame()
+        try:
+            # 接口文档：获取各价位占比
+            df = self.pro.cyq_chips(ts_code=ts_code, trade_date=trade_date)
+            return df
+        except Exception as e:
+            print(f" {Fore.RED}⚠️ 筹码分布数据获取失败: {e}")
+            return pd.DataFrame()
+
+    def _integrate_chips_to_stock(self, stock_list, date_str):
+        """
+        (预留) 将筹码概况集成到 Stock 对象中
+        注意：由于 cyq_perf 只能按 code 或 date 查，
+        如果全市场扫描，建议按 trade_date 循环提取或分页提取。
+        """
+        # 如果积分足够（5000+），可以尝试单次获取全天
+        df_perf = self.fetch_cyq_perf(trade_date=date_str)
+
+        if not df_perf.empty:
+            perf_map = df_perf.set_index('ts_code').to_dict('index')
+            for s in stock_list:
+                perf = perf_map.get(s.ts_code)
+                if perf:
+                    # 在 Stock 对象中动态添加筹码属性
+                    s.winner_rate = float(perf.get('winner_rate', 0))
+                    s.avg_cost = float(perf.get('weight_avg', 0))
+                    s.cost_85pct = float(perf.get('cost_85pct', 0))  # 压力位参考
+        return stock_list
+
+    def fetch_cyq_perf_full(self, date_str):
+        """
+        获取指定日期全市场的筹码数据
+        注意：cyq_perf 每日18:00更新，盘中跑可能拿不到当日数据（需拿昨日）
+        """
+        if not self.pro: return pd.DataFrame()
+        try:
+            # 不传 ts_code，只传 trade_date，即获取全市场
+            df = self.pro.cyq_perf(trade_date=date_str)
+            return df
+        except Exception as e:
+            print(f" {Fore.RED}⚠️ 筹码数据获取失败 (可能是权限或时间未到): {e}{Fore.RESET}")
+            return pd.DataFrame()

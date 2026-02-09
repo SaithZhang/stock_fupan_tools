@@ -1,173 +1,87 @@
 # ==============================================================================
-# 📈 技术面策略 (src/strategies/technical.py)
-# 包含：均线趋势、断板反包、DDD模式、焚诀模型、横盘筹码模型
+# 📈 技术面策略集合 (src/strategies/technical.py)
 # ==============================================================================
-
-import pandas as pd
-from datetime import datetime
-from typing import Dict, List, Optional
-from .base import BaseStrategy
-from src.data.market import TechnicalAnalyzer
-
-# 尝试导入外部独立策略文件
-try:
-    from src.strategies.ddd_mode import get_ddd_pool_category
-    from src.strategies.f_lao_model import check_fen_jue
-except ImportError:
-    def get_ddd_pool_category(item):
-        return None
+from typing import List, Union
+from src.core.domain import Stock
+from src.strategies.interface import Strategy
 
 
-    def check_fen_jue(df):
+class TrendStrategy(Strategy):
+    """
+    【趋势多头策略】
+    逻辑：MA5 > MA10 > MA20，且当前价格在MA5之上，呈现完美的上升通道。
+    """
+
+    def run(self, stock: Union[Stock, dict]) -> List[str]:
+        ma5 = self.get_val(stock, 'ma5')
+        ma10 = self.get_val(stock, 'ma10')
+        ma20 = self.get_val(stock, 'ma20')
+        price = self.get_val(stock, 'price')
+
+        # 简单的多头排列判断
+        if price > ma5 > ma10 > ma20 > 0:
+            return ["📈趋势多头"]
         return []
 
 
-class TrendStrategy(BaseStrategy):
+class ReboundStrategy(Strategy):
     """
-    趋势策略：5日线低吸、趋势加速、死鱼潜伏
-    """
-
-    def __init__(self, history_map: Dict):
-        self.history_map = history_map
-
-    def run(self, item: Dict) -> List[str]:
-        code = item['code']
-        price = item.get('price', 0)
-        if code not in self.history_map: return []
-
-        tags, _ = TechnicalAnalyzer.calculate_indicators(self.history_map[code], price)
-
-        final_tags = []
-        for t in tags:
-            if t == "🎯5日线低吸":
-                final_tags.append("🎯5日线低吸(F佬推荐)")
-            else:
-                final_tags.append(t)
-
-        f_tags = check_fen_jue(self.history_map[code])
-        if f_tags: final_tags.extend(f_tags)
-
-        return final_tags
-
-
-class DDDStrategy(BaseStrategy):
-    """
-    DDD (大订单/特定模式) 策略
+    【回踩支撑策略】
+    逻辑：股价回踩 MA10 或 MA20 均线附近（最低价触及均线，但收盘价未有效跌破）。
     """
 
-    def run(self, item: Dict) -> List[str]:
-        ddd_tag = get_ddd_pool_category(item)
-        if ddd_tag: return [ddd_tag]
+    def run(self, stock: Union[Stock, dict]) -> List[str]:
+        ma10 = self.get_val(stock, 'ma10')
+        ma20 = self.get_val(stock, 'ma20')
+        low = self.get_val(stock, 'low', 99999)  # 默认给个大数
+        close = self.get_val(stock, 'price')
+
+        labels = []
+        if ma10 > 0 and low <= ma10 <= close:
+            labels.append("🛡️回踩10日线")
+
+        if ma20 > 0 and low <= ma20 <= close:
+            labels.append("🛡️回踩20日线")
+
+        return labels
+
+
+class DDDStrategy(Strategy):
+    """
+    【大帝(DDD)放量策略】
+    逻辑：关注放量滞涨或巨量突破。
+    标准：量比 > 1.8 或 换手率 > 10%
+    """
+
+    def run(self, stock: Union[Stock, dict]) -> List[str]:
+        vol_ratio = self.get_val(stock, 'vol_ratio')
+        turnover = self.get_val(stock, 'turnover')
+
+        labels = []
+        if vol_ratio > 1.8:
+            labels.append(f"🔥量比放大({vol_ratio:.1f})")
+
+        if turnover > 10:
+            labels.append(f"💰高换手({int(turnover)}%)")
+
+        return labels
+
+
+class SidewaysChipStrategy(Strategy):
+    """
+    【横盘震荡策略】
+    逻辑：过去20天波动幅度很小，筹码在沉淀。
+    """
+
+    def run(self, stock: Union[Stock, dict]) -> List[str]:
+        # 注意：这里假设 stock 对象里有 20日最高/最低价 字段
+        # 如果没有，需要 fetcher 里先计算好，或者在这里进行更复杂的判断
+        high_20 = self.get_val(stock, 'high_20d')
+        low_20 = self.get_val(stock, 'low_20d')
+
+        if high_20 > 0 and low_20 > 0:
+            amplitude = (high_20 - low_20) / low_20
+            if amplitude < 0.15:  # 20天波动小于 15%
+                return ["💤极度横盘"]
+
         return []
-
-
-class ReboundStrategy(BaseStrategy):
-    """
-    反包策略：断板反包、跌停博弈
-    """
-
-    def __init__(self, broken_pool_map: Dict):
-        self.broken_pool_map = broken_pool_map
-
-    def run(self, item: Dict) -> List[str]:
-        tags = []
-        code = item['code']
-        pct = item.get('today_pct', 0)
-        raw_tag = str(item.get('tag', ''))
-
-        if code in self.broken_pool_map and pct > 0:
-            yest_amt = self.broken_pool_map[code]['amount']
-            label = "🔥A大焚诀"
-            if yest_amt > 10000 and item.get('amount', 0) > yest_amt:
-                label += "/爆量"
-            tags.append(label)
-
-        if pct <= -9.0: tags.append("📉跌停/博弈修复")
-
-        is_zb = "炸板" in raw_tag or (item.get('max_pct', 0) > 9.0 and pct < 9.0)
-        if is_zb and pct > -7.0: tags.append("👀焚诀预期/炸板")
-
-        return tags
-
-
-class SidewaysChipStrategy(BaseStrategy):
-    """
-    【赫萝Horoo模式】核心票横盘二波博弈策略
-    """
-
-    def __init__(self, history_map: Dict, tushare_api=None):
-        self.history_map = history_map
-        self.pro = tushare_api
-        self.cache = {}
-
-    def run(self, item: Dict) -> List[str]:
-        code = item['code']
-        if code not in self.history_map: return []
-
-        df = self.history_map[code]
-        if len(df) < 35: return []
-
-        # --- 技术面初筛 ---
-        past_window = df.iloc[-35:-5]
-        if len(past_window) < 10: return []
-
-        range_high = past_window['high'].max()
-        range_low = past_window['low'].min()
-        range_pct = (range_high - range_low) / range_low
-        has_limit_up = (past_window['pct_chg'] > 9.5).any()
-
-        if not (range_pct > 0.25 or has_limit_up): return []
-
-        recent_window = df.iloc[-5:]
-        recent_high = recent_window['high'].max()
-        recent_low = recent_window['low'].min()
-
-        if (recent_high - recent_low) / recent_low > 0.15: return []
-        if recent_window.iloc[-1]['close'] < range_high * 0.70: return []
-
-        ma20 = df.iloc[-20:]['close'].mean()
-        if recent_window.iloc[-1]['close'] < ma20 * 0.98: return []
-
-        # --- 筹码面精选 ---
-        base_tag = "👀横盘核心(结构好)"
-        if not self.pro: return [base_tag]
-
-        try:
-            ts_code = self._format_ts_code(code)
-            trade_date = df.iloc[-1]['trade_date']
-            if isinstance(trade_date, pd.Timestamp):
-                trade_date = trade_date.strftime("%Y%m%d")
-
-            cache_key = f"{code}_{trade_date}"
-            if cache_key in self.cache:
-                chip_data = self.cache[cache_key]
-            else:
-                df_cyq = self.pro.cyq_perf(ts_code=ts_code, start_date=trade_date, end_date=trade_date)
-                if df_cyq.empty: return [base_tag]
-                chip_data = df_cyq.iloc[0]
-                self.cache[cache_key] = chip_data
-
-            winner_rate = chip_data['winner_rate']
-            cost_95 = chip_data['cost_95pct']
-            cost_5 = chip_data['cost_5pct']
-            avg_cost = chip_data['weight_avg']
-            concentration = (cost_95 - cost_5) / (avg_cost + 0.01)
-
-            tags = []
-            if winner_rate >= 80:
-                tags.append(f"👑横盘筹码王(获利{int(winner_rate)}%)")
-            elif winner_rate >= 50 and concentration < 0.20:
-                tags.append(f"🚀横盘密集(获利{int(winner_rate)}%)")
-            else:
-                tags.append(base_tag)
-            return tags
-
-        except Exception as e:
-            print(f"[ChipStrategy] Error: {e}")
-            return [base_tag]
-
-    def _format_ts_code(self, code):
-        if code.startswith('6'): return f"{code}.SH"
-        if code.startswith('0') or code.startswith('3'): return f"{code}.SZ"
-        if code.startswith('8') or code.startswith('4'): return f"{code}.BJ"
-        return f"{code}.SH"

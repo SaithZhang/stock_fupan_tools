@@ -1,65 +1,83 @@
 # ==============================================================================
-# 🛡️ 策略管理器 (src/strategies/manager.py)
+# 🧠 策略管理器 (src/strategies/manager.py)
 # ==============================================================================
+import pandas as pd
 from typing import List
 from src.core.domain import Stock
 
-# 导入具体策略 (注意：这里假设你的旧策略文件还在原位)
-from src.strategies.base import BaseStrategy
-from src.strategies.sentiment import IdentityStrategy, LHBStrategy
-from src.strategies.technical import TrendStrategy, ReboundStrategy, DDDStrategy, SidewaysChipStrategy
+# 1. 导入标准接口
+from src.strategies.interface import Strategy
+
+# 2. 导入具体策略模块
+# (请确保文件名和类名与实际一致)
+from src.strategies.technical import (
+    TrendStrategy,
+    ReboundStrategy,
+    DDDStrategy,
+    SidewaysChipStrategy
+)
+from src.strategies.sentiment import (
+    IdentityStrategy,
+    LHBStrategy
+)
+from src.strategies.bolao_chip_strategy import BoLaoChipStrategy
 
 
 class StrategyManager:
     def __init__(self):
-        self.strategies: List[BaseStrategy] = []
+        # 在此注册所有启用的策略
+        # 顺序不影响逻辑，但影响标签显示的先后顺序
+        self.strategies: List[Strategy] = [
+            # --- 基础技术面 ---
+            TrendStrategy(),  # 均线多头
+            ReboundStrategy(),  # 回踩支撑
+            DDDStrategy(),  # 放量/量比
+            SidewaysChipStrategy(),  # 长期横盘(价格形态)
 
-    def load_strategies(self, context: dict):
+            # --- 情绪/玄学 ---
+            IdentityStrategy(),  # 名字玄学
+            LHBStrategy(),  # 龙虎榜
+
+            # --- 核心筹码博弈 ---
+            BoLaoChipStrategy()  # 拨佬筹码突破/支撑
+        ]
+
+    def run_all(self, stocks: List[Stock]) -> pd.DataFrame:
         """
-        统一装配策略
+        对股票池运行所有策略，返回分析结果 DataFrame
         """
-        self.strategies = []
+        if not stocks:
+            print("⚠️ 股票池为空，跳过策略分析。")
+            return pd.DataFrame()
 
-        # 1. 身份/持仓策略
-        self.strategies.append(
-            IdentityStrategy(context.get('holdings', {}), context.get('f_lao', {}), context.get('manual', {}))
-        )
+        print(f"🧠 正在调用 {len(self.strategies)} 个策略模型分析 {len(stocks)} 只股票...")
 
-        # 2. 龙虎榜策略
-        if 'lhb_codes' in context:
-            self.strategies.append(LHBStrategy(context['lhb_codes'], context.get('seat_map', {})))
+        results = []
+        for stock in stocks:
+            # 将对象转换为字典，方便处理 (如果 stock 本身就是 dict 则直接用)
+            row = stock.__dict__.copy() if hasattr(stock, '__dict__') else stock.copy()
 
-        # 3. 趋势策略 (依赖历史K线)
-        if 'history' in context:
-            self.strategies.append(TrendStrategy(context['history']))
-            self.strategies.append(SidewaysChipStrategy(context['history'], None))  # Pro暂传None
+            all_tags = []
 
-        # 4. 情绪/反核策略
-        self.strategies.append(ReboundStrategy(context.get('broken_pool', {})))
+            # 遍历每个策略，收集标签
+            for strategy in self.strategies:
+                try:
+                    tags = strategy.run(stock)
+                    if tags:
+                        all_tags.extend(tags)
+                except Exception as e:
+                    # 某个策略报错不应阻断整体流程，打印日志即可
+                    print(f"❌ 策略 {strategy.__class__.__name__} 报错: {e}")
 
-        # 5. 形态策略
-        self.strategies.append(DDDStrategy())
+            # 合并标签：用 " | " 分隔
+            row['tag'] = " | ".join(all_tags) if all_tags else ""
 
-        print(f"🛡️ 已加载 {len(self.strategies)} 个作战策略")
+            # 记录命中的策略数量 (可选，用于后续筛选“多重共振”的标的)
+            row['strategy_count'] = len(all_tags)
 
-    def execute_all(self, stock: Stock) -> List[str]:
-        """
-        对一只股票执行所有策略
-        """
-        hit_tags = []
-        for strategy in self.strategies:
-            try:
-                # 兼容性调用：旧策略的 run 方法可能需要 dict，
-                # 但我们的 Stock 对象实现了 __getitem__，所以可以直接传！
-                tags = strategy.run(stock)
-                if tags:
-                    if isinstance(tags, list):
-                        hit_tags.extend(tags)
-                    elif isinstance(tags, str):
-                        hit_tags.append(tags)
-            except Exception as e:
-                # 生产环境建议 log error，不要 print 刷屏
-                pass
+            results.append(row)
 
-        # 去重
-        return list(set(hit_tags))
+        df = pd.DataFrame(results)
+        print("✅ 策略分析完成！")
+
+        return df

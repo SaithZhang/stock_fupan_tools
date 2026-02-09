@@ -40,6 +40,12 @@ class Stock:
     # --- 扩展槽 ---
     extra: Dict[str, Any] = field(default_factory=dict)
 
+    # --- 新增：筹码分布数据 (Chip Distribution) ---
+    winner_rate: float = 0.0  # 获利盘比例 (胜率)
+    cost_5pct: float = 0.0  # 5分位成本 (底部支撑)
+    cost_95pct: float = 0.0  # 95分位成本 (顶部压力/突破位)
+    weight_avg: float = 0.0  # 加权平均成本 (全市场平均持仓成本)
+
     # --- 策略结果 ---
     tags: List[str] = field(default_factory=list)
     risk_level: str = "🟢 Safe"
