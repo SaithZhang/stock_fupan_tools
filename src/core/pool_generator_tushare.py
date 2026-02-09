@@ -117,7 +117,9 @@ class PoolGeneratorV3:
 
         # 遍历 Stock 对象
         for stock in self.all_data:
-            if 'ST' in stock.name.upper(): continue
+            # ✅ 这样写代码可读性极高，而且以后想过滤 "科创板" 也可以加 is_kcb
+            if stock.is_st:
+                continue
 
             # 1. 执行策略 (管理器托管)
             # Stock对象有 __getitem__，所以即使策略代码还没改，也能跑

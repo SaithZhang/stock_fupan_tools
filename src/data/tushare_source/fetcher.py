@@ -1,18 +1,13 @@
 # ==============================================================================
 # 🦅 Tushare 数据抓取聚合 (src/data/tushare_source/fetcher.py)
-# Version: 3.1 (Returns Domain Objects)
+# Version: 3.4 (Cloud Auction: Fully Automated)
 # ==============================================================================
 import pandas as pd
 import time
+import re
 from colorama import Fore
 from src.data.tushare_source.client import TushareClient
-from src.core.domain import Stock  # ✅ 引入新模型
-
-try:
-    from src.data.ths_local import THSLocalLoader
-    from src.config.settings import Config
-except ImportError:
-    THSLocalLoader = None
+from src.core.domain import Stock
 
 
 class TushareFetcher:
@@ -20,22 +15,19 @@ class TushareFetcher:
         self.pro = TushareClient.get_pro()
 
     def fetch_daily_full(self, date_str) -> list[Stock]:
-        """
-        [1/3] 获取全市场数据并封装为 Stock 对象
-        """
         if not self.pro: return []
         print(f"🦅 正在拉取 {date_str} 数据 (分步执行)...")
 
         try:
             # 1. 获取日线
-            print(f"   ├── [1/5] 获取基础行情...", end="", flush=True)
+            print(f"   ├── [1/4] 获取基础行情...", end="", flush=True)
             df_daily = self.pro.daily(trade_date=date_str)
             df_basic = self.pro.daily_basic(trade_date=date_str,
                                             fields='ts_code,turnover_rate,circ_mv,total_mv,volume_ratio')
             print(" ✅")
 
-            # 2. 获取昨日数据
-            print(f"   ├── [2/5] 获取昨日数据...", end="", flush=True)
+            # 2. 获取昨日数据 (用于计算量比的分母)
+            print(f"   ├── [2/4] 获取昨日数据...", end="", flush=True)
             prev_date = self._get_prev_date(date_str)
             df_prev = pd.DataFrame()
             if prev_date:
@@ -43,17 +35,17 @@ class TushareFetcher:
                 df_prev.rename(columns={'vol': 'last_vol'}, inplace=True)
             print(" ✅")
 
-            # 3. 获取竞价
-            print(f"   ├── [3/5] 获取集合竞价...", end="", flush=True)
-            df_auction = self._fetch_auction_data(date_str)
-            print(" ✅")
+            # 3. 获取云端竞价 (直接调用接口)
+            print(f"   ├── [3/4] 获取云端竞价...", end="", flush=True)
+            df_auction = self._fetch_cloud_auction(date_str)
+            print(f" ✅ (获取 {len(df_auction)} 条)")
 
-            # 4. 获取同花顺
-            print(f"   ├── [4/5] 获取同花顺数据...", end="", flush=True)
+            # 4. 获取同花顺涨跌停 (权威)
+            print(f"   ├── [4/4] 获取同花顺数据...", end="", flush=True)
             ths_stats, df_ths_zt = self.fetch_ths_limit_stats(date_str)
             print(" ✅")
 
-            # 5. 合并与对象化
+            # 5. 合并与清洗
             print(f"   └── [5/5] 数据合并与对象化...", end="", flush=True)
 
             df_merge = pd.merge(df_daily, df_basic, on='ts_code', how='left')
@@ -65,77 +57,99 @@ class TushareFetcher:
             if not df_auction.empty:
                 df_merge = pd.merge(df_merge, df_auction, on='ts_code', how='left')
 
-            # 预处理集合
             zt_codes = set(df_ths_zt['ts_code']) if not df_ths_zt.empty else set()
-            zb_codes = set()  # 如果你有炸板数据，也可以在这里处理
+            # 炸板数据暂略，如需可加
+            zb_codes = set()
 
             name_map = self._get_stock_names()
             stock_list = []
 
             for _, row in df_merge.iterrows():
                 full_code = row['ts_code']
+                stock_name = name_map.get(full_code, '未知')
 
-                # --- 计算逻辑 ---
-                # 1. 开盘涨幅
+                # --- 1. 开盘涨幅 (基于日线 Open) ---
                 calc_open_pct = 0.0
                 if row['pre_close'] > 0:
                     calc_open_pct = (row['open'] - row['pre_close']) / row['pre_close'] * 100
 
-                # 2. 竞价逻辑
-                vol_auc = float(row.get('auc_vol', 0))  # 注意：如果是本地数据，这里可能为0
-                vol_last = float(row.get('last_vol', 0)) * 100  # 手 -> 股
+                # --- 2. 竞价逻辑 (基于云端数据) ---
+                # amount: Tushare单位是元
+                # vol: Tushare单位是手，转成股 * 100
+                auc_amt = float(row.get('auc_amt', 0))
 
-                # 优先使用本地文件里的 auc_pct，否则用开盘涨幅兜底
-                # 这里的 auc_pct 来源于 _fetch_auction_data 处理后的列
-                auc_pct = float(row.get('auc_pct', 0)) if pd.notnull(row.get('auc_pct')) and row.get(
-                    'auc_pct') != 0 else calc_open_pct
+                # 竞价涨幅：优先使用云端计算好的 auc_pct
+                # 如果云端没数据 (NaN)，则降级使用开盘涨幅 calc_open_pct
+                auc_pct_val = float(row.get('auc_pct', 0))
+                if pd.isna(row.get('auc_pct')):
+                    final_auc_pct = calc_open_pct
+                else:
+                    final_auc_pct = auc_pct_val
 
-                # 简单的竞价量比计算 (如果没有本地auc_vol，这里会是0，不影响)
+                # 竞价量比
+                # last_vol 是昨日全天成交量(手) * 100 -> 股
+                # auc_vol 是竞价成交量(手) * 100 -> 股
+                vol_last = float(row.get('last_vol', 0)) * 100
+                vol_auc = float(row.get('auc_vol', 0)) * 100
+
                 auc_ratio = (vol_auc / vol_last) if vol_last > 0 else 0.0
 
-                # 3. 连板解析
+                # --- 3. 连板解析 (Regex) ---
                 limit_days = 0
-                ths_status = ""
+                ths_status_str = ""
+                limit_type_str = ""
                 ths_desc = ""
 
-                if full_code in zt_codes and not df_ths_zt.empty:
+                is_zt = full_code in zt_codes
+                if is_zt and not df_ths_zt.empty:
                     matches = df_ths_zt[df_ths_zt['ts_code'] == full_code]
                     if not matches.empty:
                         item = matches.iloc[0]
-                        ths_status = str(item.get('status', ''))
+                        ths_status_str = str(item.get('tag', ''))  # "4天4板"
+                        limit_type_str = str(item.get('status', ''))  # "换手板"
                         ths_desc = str(item.get('lu_desc', ''))
-                        if '连板' in ths_status:
-                            limit_days = int(''.join(filter(str.isdigit, ths_status)) or 1)
-                        else:
+
+                        # 解析高度
+                        limit_days = 1
+                        m = re.search(r'(\d+)(连板|板)', ths_status_str)
+                        if m:
+                            limit_days = int(m.group(1))
+                        elif '首板' in ths_status_str:
                             limit_days = 1
 
-                # --- ✅ 实例化 Stock 对象 ---
+                # --- 4. 统一识别 ST ---
+                _is_st = 'ST' in stock_name.upper()
+
+                # --- 实例化 ---
                 s = Stock(
                     code=full_code.split('.')[0],
-                    name=name_map.get(full_code, '未知'),
+                    name=stock_name,
                     ts_code=full_code,
+
                     price=float(row['close']),
                     open_price=float(row['open']),
                     pct=float(row['pct_chg']),
                     open_pct=calc_open_pct,
-                    amount=float(row['amount']) * 1000,
+
+                    amount=float(row['amount']) * 1000,  # Tushare amount is 1000s
                     turnover=float(row.get('turnover_rate', 0)),
                     vol_ratio=float(row.get('volume_ratio', 0)),
 
-                    # 竞价
-                    auc_amt=float(row.get('auc_amt', 0)),
-                    auc_pct=auc_pct,
+                    # 竞价数据
+                    auc_amt=auc_amt,
+                    auc_pct=final_auc_pct,
                     auc_ratio=auc_ratio,
-                    call_auction_ratio=auc_ratio * 100,  # 兼容
+                    call_auction_ratio=auc_ratio * 100,
 
                     # 状态
-                    is_zt=(full_code in zt_codes),
+                    is_zt=is_zt,
+                    is_st=_is_st,
                     limit_days=limit_days,
-                    ths_status=ths_status,
+                    ths_status=ths_status_str,
+                    limit_type=limit_type_str,
                     ths_desc=ths_desc,
                     is_broken=(full_code in zb_codes)
                 )
-
                 stock_list.append(s)
 
             print(" ✅")
@@ -147,9 +161,6 @@ class TushareFetcher:
             traceback.print_exc()
             return []
 
-    # ... (Fetch Index, Fetch THS Stats, Helpers 保持不变，可以直接复制之前的逻辑) ...
-    # 为了完整性，这里补充剩下的方法
-
     def fetch_market_index(self, date_str):
         if not self.pro: return {}
         print(f"   📊 正在获取大盘指数...", end="")
@@ -159,62 +170,89 @@ class TushareFetcher:
             for k, c in targets.items():
                 df = self.pro.index_daily(ts_code=c, trade_date=date_str)
                 if not df.empty:
-                    result[k] = {'pct': float(df.iloc[0]['pct_chg']), 'amount': float(df.iloc[0]['amount']) * 1000}
+                    result[k] = {
+                        'pct': float(df.iloc[0]['pct_chg']),
+                        'amount': float(df.iloc[0]['amount']) * 1000
+                    }
             print(" ✅")
             return result
         except:
-            print(" ❌")
+            print(f" {Fore.RED}❌{Fore.RESET}")
             return {}
 
     def fetch_ths_limit_stats(self, date_str):
         if not self.pro: return {}, pd.DataFrame()
         try:
-            df_up = self.pro.limit_list_ths(trade_date=date_str, limit_type='涨停池')
-            df_down = self.pro.limit_list_ths(trade_date=date_str, limit_type='跌停池')
+            fields = 'ts_code,name,trade_date,tag,status,lu_desc'
+            df_up = self.pro.limit_list_ths(trade_date=date_str, limit_type='涨停池', fields=fields)
+            time.sleep(0.2)
+            df_down = self.pro.limit_list_ths(trade_date=date_str, limit_type='跌停池', fields=fields)
 
             count_up = len(df_up) if not df_up.empty else 0
             count_down = len(df_down) if not df_down.empty else 0
 
             height = 0
-            if count_up > 0 and 'status' in df_up.columns:
-                def p(s): return int(''.join(filter(str.isdigit, str(s))) or 1) if '连板' in str(s) else 1
+            if count_up > 0 and 'tag' in df_up.columns:
+                def parse_height(s):
+                    s = str(s)
+                    m = re.search(r'(\d+)(连板|板)', s)
+                    if m: return int(m.group(1))
+                    if '首板' in s: return 1
+                    return 1
 
-                height = df_up['status'].apply(p).max()
+                height = df_up['tag'].apply(parse_height).max()
 
             print(f"   🔥 权威校准: 涨停 {count_up} 家 | 跌停 {count_down} 家 | 最高板 {height}")
             return {'limit_up_count': count_up, 'limit_down_count': count_down, 'highest_plate': height}, df_up
-        except:
+        except Exception as e:
+            print(f"获取榜单失败: {e}")
             return {}, pd.DataFrame()
 
     def _get_prev_date(self, date_str):
         try:
             df = self.pro.trade_cal(exchange='', is_open='1', end_date=date_str, limit=2)
             dates = df['cal_date'].tolist()
-            if len(dates) == 2 and dates[1] == date_str: return dates[0]
+            if len(dates) == 2 and dates[1] == date_str:
+                return dates[0]
             return None
         except:
             return None
 
-    def _fetch_auction_data(self, date_str):
-        df_auc = pd.DataFrame()
-        # 1. 本地
-        if THSLocalLoader:
-            try:
-                local_dir = getattr(Config, 'CALL_AUCTION_DIR', 'data/input/call_auction')
-                loader = THSLocalLoader(local_dir)
-                df_local = loader.load_auction_table(date_str)
-                if not df_local.empty:
-                    return df_local[['ts_code', 'auc_amt', 'auc_pct']]
-            except:
-                pass
-        # 2. Tushare
+    def _fetch_cloud_auction(self, date_str):
+        """
+        🔥 核心：直接从 Tushare 云端获取竞价数据，并计算涨幅
+        """
         try:
-            df_auc = self.pro.stk_auction_o(trade_date=date_str, fields='ts_code,vol,amount')
-            df_auc.rename(columns={'vol': 'auc_vol', 'amount': 'auc_amt'}, inplace=True)
-            df_auc['auc_vol'] = df_auc['auc_vol'] * 100
-        except:
-            pass
-        return df_auc
+            # 1. 调用接口
+            # 注意：amount单位是元，vol是手，price是元，pre_close是元
+            df = self.pro.stk_auction(trade_date=date_str, fields='ts_code,vol,amount,price,pre_close')
+
+            if df.empty:
+                return pd.DataFrame()
+
+            # 2. 数据清洗
+            df['price'] = pd.to_numeric(df['price'], errors='coerce')
+            df['pre_close'] = pd.to_numeric(df['pre_close'], errors='coerce')
+            df['amount'] = pd.to_numeric(df['amount'], errors='coerce')  # 元
+            df['vol'] = pd.to_numeric(df['vol'], errors='coerce')  # 手
+
+            # 3. 计算竞价涨幅 (Price - PreClose) / PreClose
+            # 避免除以0
+            df['auc_pct'] = 0.0
+            mask = df['pre_close'] > 0
+            df.loc[mask, 'auc_pct'] = (df.loc[mask, 'price'] - df.loc[mask, 'pre_close']) / df.loc[
+                mask, 'pre_close'] * 100
+
+            # 4. 重命名以匹配后续逻辑
+            # vol -> auc_vol, amount -> auc_amt
+            df.rename(columns={'vol': 'auc_vol', 'amount': 'auc_amt'}, inplace=True)
+
+            # 返回这三列即可，merge的时候会自动匹配 ts_code
+            return df[['ts_code', 'auc_vol', 'auc_amt', 'auc_pct']]
+
+        except Exception as e:
+            print(f" {Fore.RED}⚠️ 云端竞价拉取失败: {e}")
+            return pd.DataFrame()
 
     def _get_stock_names(self):
         try:
