@@ -1,7 +1,6 @@
 # ==============================================================================
-# 🏭 策略工厂 V3.4 (src/core/pool_generator_tushare.py)
-# Version: 3.4 (Aggressive Active Filter - Target 300)
-# Fix: 适配 V4.0 Modular Fetcher 架构
+# 🏭 策略工厂 V3.5 (src/core/pool_generator_tushare.py)
+# Version: 3.5 (Tag Fusion Fix - Preserve Fetcher Tags)
 # ==============================================================================
 
 import os
@@ -34,7 +33,6 @@ try:
     from src.data.exporter import ResultExporter
     from src.utils.date_tools import DateUtils
     from src.strategies.f_lao_model import load_ths_history
-    # ✅ 新增：引入过滤器
     from src.core.filter import StockFilter
 
 except ImportError as e:
@@ -48,7 +46,6 @@ class PoolGeneratorV3:
         self.fetcher = TushareFetcher()
         self.md_manager = MarketDataManager()
         self.strategy_manager = StrategyManager()
-        # ✅ 初始化过滤器
         self.filter = StockFilter()
 
         self.all_data: List[Stock] = []
@@ -65,21 +62,18 @@ class PoolGeneratorV3:
         target_date = DateUtils.get_smart_trading_date(self.pro)
         print(f"   📅 锁定复盘日期: {Fore.YELLOW}{target_date}{Fore.RESET}")
 
-        # 1. 指数 (调用 market 组件)
-        # Fix: 使用 V4.0 market 组件
+        # 1. 指数
         index_data = self.fetcher.market.fetch_index(target_date)
         self.md_manager.update_indices(index_data)
 
-        # 2. 全市场数据 (调用 stocks 流水线)
-        # Fix: 使用 V4.0 stocks 引擎
+        # 2. 全市场数据 (个股流水线)
         self.all_data = self.fetcher.stocks.run(target_date)
 
         if not self.all_data:
             print(f"{Fore.RED}❌ 数据拉取失败")
             return False
 
-        # 3. 同花顺概览 (调用 market 组件)
-        # Fix: 使用 V4.0 market 组件
+        # 3. 同花顺概览
         ths_stats = self.fetcher.market.fetch_limit_stats(target_date)
         self.md_manager.update_stats(ths_stats)
 
@@ -113,7 +107,7 @@ class PoolGeneratorV3:
     def run_pipeline(self):
         if not self.load_resources(): return
 
-        print(f"{Fore.CYAN}⚙️ [2/4] 执行策略 (V3.4 Aggressive Filter)...")
+        print(f"{Fore.CYAN}⚙️ [2/4] 执行策略 (V3.5 Tag Fusion)...")
 
         # 1. 批量运行策略
         df_res = self.strategy_manager.run_all(self.all_data)
@@ -132,19 +126,38 @@ class PoolGeneratorV3:
             if stock.is_st:
                 continue
 
+            # 获取策略标签 (Hit Tags)
             tag_str = tag_map.get(stock.ts_code, "")
             hit_tags = tag_str.split(" | ") if tag_str else []
 
-            # 传入 context 供过滤器使用
+            # 过滤器检查
             if not self.filter.check(stock, hit_tags, self.context):
                 continue
 
+            # 🔥 核心修复：备份 Fetcher 阶段获取的标签 (如热度、游资)
+            # Stock 对象在 fetcher 中可能已经有了 tags 属性 (list)
+            fetcher_tags = stock.tags if hasattr(stock, 'tags') and stock.tags else []
+
+            # 计算 Tagger 标签 (技术面/概念/连板)
             final_tag_str, is_selected, zt_type = tagger.get_tags(stock, hit_tags)
 
             if is_selected:
                 stock.limit_type = zt_type
-                stock.add_tag(final_tag_str)
-                stock.tags = [final_tag_str]
+
+                # 🔥 核心修复：标签融合 (Fusion)
+                # 将 fetcher_tags 追加到 final_tag_str 后面，避免覆盖
+                fusion_tags = []
+                if final_tag_str: fusion_tags.append(final_tag_str)
+
+                for t in fetcher_tags:
+                    # 去重：如果 final_tag_str 里已经有了，就不加了
+                    if t and t not in final_tag_str:
+                        fusion_tags.append(t)
+
+                # 更新最终标签字符串
+                merged_tag_str = "/".join(fusion_tags)
+                stock.add_tag(merged_tag_str)
+                stock.tags = [merged_tag_str]  # 确保导出时使用的是融合后的标签
 
                 item_dict = stock.to_dict()
                 item_dict['link_dragon'] = TextUtils.get_link_dragon(stock.code)
@@ -159,7 +172,7 @@ class PoolGeneratorV3:
         print(f"   🧹 已过滤弱势/非活跃标的: {len(self.all_data) - len(results_pool)} 只")
         print(f"   💎 最终入池: {len(results_pool)} 只")
 
-        # 🔥 Fix: 修复此处的旧调用，使用新架构
+        # 获取统计数据 (用于大盘分析)
         ths_stats = self.fetcher.market.fetch_limit_stats(DateUtils.get_smart_trading_date(self.pro))
 
         phase_info = MarketAnalyzer.analyze_phase(results_pool, ths_stats)
