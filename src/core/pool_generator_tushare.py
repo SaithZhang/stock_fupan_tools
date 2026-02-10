@@ -1,6 +1,7 @@
 # ==============================================================================
 # 🏭 策略工厂 V3.4 (src/core/pool_generator_tushare.py)
 # Version: 3.4 (Aggressive Active Filter - Target 300)
+# Fix: 适配 V4.0 Modular Fetcher 架构
 # ==============================================================================
 
 import os
@@ -64,18 +65,22 @@ class PoolGeneratorV3:
         target_date = DateUtils.get_smart_trading_date(self.pro)
         print(f"   📅 锁定复盘日期: {Fore.YELLOW}{target_date}{Fore.RESET}")
 
-        # 1. 指数
-        index_data = self.fetcher.fetch_market_index(target_date)
+        # 1. 指数 (调用 market 组件)
+        # Fix: 使用 V4.0 market 组件
+        index_data = self.fetcher.market.fetch_index(target_date)
         self.md_manager.update_indices(index_data)
 
-        # 2. 全市场数据
-        self.all_data = self.fetcher.fetch_daily_full(target_date)
+        # 2. 全市场数据 (调用 stocks 流水线)
+        # Fix: 使用 V4.0 stocks 引擎
+        self.all_data = self.fetcher.stocks.run(target_date)
+
         if not self.all_data:
             print(f"{Fore.RED}❌ 数据拉取失败")
             return False
 
-        # 3. 同花顺概览
-        ths_stats, _ = self.fetcher.fetch_ths_limit_stats(target_date)
+        # 3. 同花顺概览 (调用 market 组件)
+        # Fix: 使用 V4.0 market 组件
+        ths_stats = self.fetcher.market.fetch_limit_stats(target_date)
         self.md_manager.update_stats(ths_stats)
 
         # 4. Top50 门槛
@@ -130,8 +135,7 @@ class PoolGeneratorV3:
             tag_str = tag_map.get(stock.ts_code, "")
             hit_tags = tag_str.split(" | ") if tag_str else []
 
-            # 🔥🔥🔥 修改这里：传入 context 🔥🔥🔥
-            # 只有传入 context，过滤器才能识别你的持仓和 F佬列表
+            # 传入 context 供过滤器使用
             if not self.filter.check(stock, hit_tags, self.context):
                 continue
 
@@ -155,12 +159,15 @@ class PoolGeneratorV3:
         print(f"   🧹 已过滤弱势/非活跃标的: {len(self.all_data) - len(results_pool)} 只")
         print(f"   💎 最终入池: {len(results_pool)} 只")
 
-        ths_stats, _ = self.fetcher.fetch_ths_limit_stats(DateUtils.get_smart_trading_date(self.pro))
+        # 🔥 Fix: 修复此处的旧调用，使用新架构
+        ths_stats = self.fetcher.market.fetch_limit_stats(DateUtils.get_smart_trading_date(self.pro))
+
         phase_info = MarketAnalyzer.analyze_phase(results_pool, ths_stats)
         self.md_manager.update_stats(phase_info)
 
         print(f"\n{Fore.YELLOW}{self.md_manager.get_formatted_summary()}")
         ResultExporter.export_pool(results_pool)
+
 
 if __name__ == "__main__":
     generator = PoolGeneratorV3()

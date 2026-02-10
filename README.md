@@ -1,41 +1,79 @@
 # 🦅 股票复盘与监控系统 (Stock Review & Monitor System)
 
-> **当前版本**: V3.4 (Cloud Auction: Fully Automated)
-> **核心驱动**: Tushare Pro + 策略工厂 + 盘中实时监控
+> **当前版本**: V4.0 (Modular Architecture / Tushare Automated)
+> **核心驱动**: Tushare Pro + 策略流水线 + 盘中实时监控
+> **设计理念**: 领域驱动设计 (DDD) + 插件化架构 (Pipeline Pattern) + 开闭原则 (OCP)
 
 本工程用于 A 股短线交易的日常复盘、策略筛选及盘中监控。核心围绕 **“弱转强”**、**“龙头战法”** 及 **“监管风控”** 体系构建。
 
 ---
 
-## 🚀 核心功能与数据源 (Data & Features)
+## 🚀 核心功能 (Features)
 
-本项目正在从“手动导出数据”向“全自动化 Tushare 接口”转型。以下是当前接入的核心数据源：
+本项目已实现 **全自动化 Tushare 数据接入**，告别手动导出数据。数据层采用流水线插件模式，支持灵活扩展。
 
-| 数据类型 | 来源 | 说明 | 状态 |
+| 数据模块 | 对应插件 (Step) | 功能说明 | 状态 |
 | :--- | :--- | :--- | :--- |
-| **基础行情** | 🦅 Tushare | 日线、复权因子、停复牌信息 | ✅ 已接入 |
-| **云端竞价** | 🦅 Tushare | **[核心]** 每日9:25自动拉取全市场竞价数据 (量比/金额/涨幅) | ✅ **[NEW]** |
-| **涨跌停分析**| 🦅 Tushare | 同花顺涨跌停榜单、连板高度、炸板数据 | ✅ 已接入 |
-| **筹码分布** | 🦅 Tushare | 全市场获利盘比例 (`winner_rate`)、平均成本 | ⚠️ **[NEW]** (盘后需19:30更新) |
-| **龙虎榜** | 🦅 Tushare | 每日上榜席位数据 (`top_list`)，识别游资/机构动向 | ✅ **[NEW]** |
-| **监管风控** | 🦅 Tushare | (计划中) 计算 10日100% / 30日200% 偏离值 | 🚧 开发中 |
-| **情绪/热度** | 外部爬虫 | 东方财富/同花顺热榜 (App Hot List) | 🚧 计划接入 |
+| **基础行情** | `BasicInfoStep` | 日线、复权因子、昨收、量比计算 | ✅ |
+| **云端竞价** | `AuctionStep` | **[核心]** 每日9:25自动拉取竞价涨幅、竞价金额、量比 | ✅ |
+| **涨跌停** | `LimitBoardStep` | 同花顺涨跌停榜单、连板高度、炸板分析 | ✅ |
+| **市场热度** | `SentimentStep` | **[NEW]** 同花顺/东财 App 热榜 Top200 | ✅ |
+| **游资明细** | `SmartMoneyStep` | **[NEW]** 知名游资（如陈小群、六一中路）操作明细 | ✅ |
+| **筹码分布** | `ChipStep` | **[NEW]** 全市场获利盘比例、平均成本（盘后19:30更新） | ✅ |
+| **大盘全景** | `MarketOverview` | 指数涨跌、涨跌家数统计、赚钱效应分析 | ✅ |
 
 ---
 
-## 📁 目录结构
+## 💻 架构与开发规范 (Architecture & Standards)
 
-* `src/core/`: 核心逻辑
-    * `pool_generator_tushare.py`: **[主程序]** 每日复盘策略工厂 (V3.4)。
-    * `filter.py`: 选股过滤器 (黑名单/市值/ST/持仓过滤)。
-    * `stock_tagger.py`: 自动打标系统 (如 "3天2板", "反包", "龙虎榜净买")。
-* `src/data/tushare_source/`: 数据接入层
-    * `fetcher.py`: 负责聚合拉取日线、竞价、筹码等数据。
-* `src/monitors/`: 监控终端
-    * `call_auction_screener.py`: **[竞价]** 9:25-9:30 弱转强筛选。
-    * `intraday_monitor.py`: **[盘中]** 实时持仓盯盘。
-* `src/strategies/`: 策略库
-    * `auction.py`: 竞价强弱判定算法。
+为了保持代码的长期可维护性，本项目严格遵循 **开闭原则 (Open/Closed Principle)**。
+
+### 1. 目录结构 (Project Structure)
+
+src/
+├── core/
+│   ├── pool_generator_tushare.py # [Client] 每日复盘策略工厂入口
+│   ├── domain.py                 # [Domain] 领域对象 (Stock) 定义
+│   └── filter.py                 # [Service] 选股过滤器 (黑名单/ST/市值)
+└── data/
+    └── tushare_source/           # [Infrastructure] 数据层
+        ├── fetcher.py            # [Facade] 门面模式，唯一的外部访问入口
+        ├── pipeline.py           # [Engine] 个股数据处理流水线
+        ├── global_data.py        # [Service] 大盘/宏观数据服务
+        └── steps/                # [Plugins] 数据源插件包 (新增数据源改这里)
+            ├── base.py           # [Interface] 定义 fetch/enrich 接口
+            ├── basic.py          # 基础行情插件
+            ├── auction.py        # 竞价数据插件
+            ├── sentiment.py      # 情绪热度插件
+            └── ...               # (在此添加新文件)
+
+### 2. 扩展指南：如何新增数据源？
+
+如果您需要接入新的 Tushare 接口（例如“北向资金”），请遵循以下步骤，**无需修改 `fetcher.py` 或 `pipeline.py`**：
+
+1.  **新建插件文件**：在 `src/data/tushare_source/steps/` 下新建 `north.py`。
+2.  **继承基类实现接口**：
+    from .base import BaseDataStep
+
+    class NorthMoneyStep(BaseDataStep):
+        def fetch(self, date_str, context):
+            # 1. 拉取数据
+            df = self.pro.hk_hold(trade_date=date_str)
+            # 2. 存入上下文 (context 是一个共享字典)
+            context['north_df'] = df
+
+        def enrich(self, stock, row, context):
+            # 3. 将数据注入 Stock 对象
+            if stock.ts_code in context['north_df']:
+                stock.add_tag("北向买入")
+
+3.  **注册插件**：在 `src/data/tushare_source/pipeline.py` 的 `self.steps` 列表中添加 `NorthMoneyStep(self.pro)`。
+
+### 3. 设计模式应用 (Design Patterns)
+
+* **Facade Pattern (门面模式)**: `TushareFetcher` 是数据层的唯一入口，屏蔽了内部 `pipeline` 和 `global_data` 的复杂性。
+* **Pipeline Pattern (流水线模式)**: 个股数据构建过程被拆分为多个独立的 `Step`，依次执行 `fetch` -> `merge` -> `enrich`。
+* **Context Object (上下文对象)**: 使用 `ctx (dict)` 在各个 Step 之间传递 DataFrame，实现组件解耦。
 
 ---
 
@@ -45,65 +83,60 @@
 
 目标：生成明日的 **策略池 (Strategy Pool)**。
 
-1.  **准备数据**:
-    * 无需手动导出同花顺数据（除非 Tushare 接口故障）。
-    * 确保 `Config.HOLDINGS_PATH` (持仓) 和 `Config.F_LAO_PATH` (大佬作业) 已更新。
+1.  **准备配置**:
+    * 确认 `Config.HOLDINGS_PATH` (持仓) 和 `Config.F_LAO_PATH` (关注池) 已更新。
+    * 确保 Tushare Token 有效。
 
 2.  **运行生成器**:
-    ```bash
     python src/core/pool_generator_tushare.py
-    ```
-    * **执行逻辑**:
-        1.  自动拉取当日行情、涨跌停数据。
-        2.  拉取龙虎榜数据，标记知名游资入驻个股。
-        3.  拉取筹码数据（需19:30后），标记获利盘比例。
-        4.  **过滤器 (Filter)**: 剔除 ST、流动性差（成交额 < 5000万）的杂毛。
-        5.  **打标 (Tagger)**: 识别“首板”、“连板”、“反包”等形态。
+
+    * **程序动作**:
+        1.  调用 `MarketOverview` 获取大盘指数与涨跌停统计。
+        2.  启动 `StockDataPipeline`，流水线式拉取并清洗全市场个股数据。
+        3.  `StockFilter` 剔除 ST、流动性差（成交额 < 5000万）的标的。
+        4.  `StockTagger` 自动打标（如 "3天2板", "🔥Top10", "🐉陈小群买入"）。
     * **输出**: `data/output/strategy_pool.csv`
 
 ### 2. 竞价筛选 (9:25 - 9:30)
 
-目标：在开盘前 5 分钟锁定 **“弱转强”** 标的。
+目标：锁定 **“弱转强”** 标的。
 
 1.  **运行监控**:
-    ```bash
     python src/monitors/call_auction_screener.py
-    ```
-2.  **核心看点**:
-    * **🔥 弱转强**: 昨日烂板/断板/阴线 -> 今日**高开** + **爆量** (竞价额 > 昨日成交 5%-10%)。
-    * **📉 核按钮**: 竞价跌幅 < -5%，提示风险（若持有需警惕，若未持有需规避）。
-    * **💰 抢筹**: 竞价金额 > 1亿，说明主力意图强烈。
+
+2.  **核心策略**:
+    * **🔥 弱转强**: 昨日分歧（烂板/断板/大阴） -> 今日 **高开 + 爆量**。
+    * **💰 抢筹**: 竞价金额 > 1亿，或量比 > 10。
+    * **📉 避雷**: 竞价跌幅 < -5%，核按钮预警。
 
 ### 3. 盘中盯盘 (9:30 - 15:00)
 
 1.  **运行监控**:
-    ```bash
     python src/monitors/intraday_monitor.py
-    ```
-    * 实时监控持仓股的盈亏状况。
-    * 监控策略池中触发 **“大单点火”** 或 **“快速拉升”** 的个股。
+
+    * 实时监控持仓盈亏。
+    * 监控策略池中的“大单点火”信号。
 
 ---
 
-## 🧠 核心策略逻辑
+## 📝 配置说明 (Configuration)
 
-### 1. 弱转强 (Weak to Strong)
-* **定义**: 个股在经历了前一日的分歧（烂板、大阴线、炸板）后，次日竞价或开盘表现出一致性转强（高开、快速上攻）。
-* **代码实现**: 见 `src/strategies/auction.py`
-    * `analyze_status`: 判定 `yest_pct < 0` 且 `auc_pct > 0.5`。
-
-### 2. 筹码支撑 (Chip Support) **[NEW]**
-* **逻辑**: 股价回调至主力成本区（`cost_5pct`）或获利盘比例极低（`winner_rate` < 1%）时，往往有反弹需求。
-* **应用**: 在 `fetcher.py` 中注入 `winner_rate`，辅助判断底部承接。
-
-### 3. 监管风控 (Regulation Risk) **[Planned]**
-* **关注**: 10日涨幅偏离值 > 100% 或 30日 > 200%。
-* **操作**: 触及红线前禁止追高，主力往往会主动回调控制异动。
+* `src/config/settings.py`:
+    * `TUSHARE_TOKEN`: 您的 Tushare 密钥。
+    * `THS_HOT_LIMIT`: 热榜抓取数量（默认 200）。
+* `data/input/holdings.txt`: 持仓代码列表（每行一个代码）。
+* `data/input/f_lao_list.txt`: 重点跟踪代码池。
 
 ---
 
-## 📝 配置说明
+## 🛠️ 模块索引 (Module Index)
 
-* `src/config/settings.py`: 修改 Tushare Token 和路径配置。
-* `data/input/holdings.txt`: 你的持仓代码（每行一个）。
-* `data/input/f_lao_list.txt`: 重点跟踪的代码池。
+| 模块路径 | 说明 |
+| :--- | :--- |
+| `src/core/pool_generator_tushare.py` | **【主程序】** 策略工厂入口 |
+| `src/data/tushare_source/fetcher.py` | **【门面】** 数据层统一入口 |
+| `src/data/tushare_source/pipeline.py` | **【引擎】** 个股数据处理流水线 |
+| `src/data/tushare_source/global_data.py` | **【服务】** 大盘/宏观数据服务 |
+| `src/data/tushare_source/steps/*.py` | **【插件】** 各种具体的数据源实现 |
+| `src/monitors/call_auction_screener.py` | **【监控】** 竞价筛选工具 |
+| `src/strategies/auction.py` | **【策略】** 竞价强弱判定逻辑 |
