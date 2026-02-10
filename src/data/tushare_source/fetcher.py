@@ -138,12 +138,13 @@ class TushareFetcher:
                     pct=float(row['pct_chg']),
                     open_pct=calc_open_pct,
 
-                    amount=float(row['amount']) * 1000,  # Tushare amount is 1000s
-                    turnover=float(row.get('turnover_rate', 0)),
-                    vol_ratio=float(row.get('volume_ratio', 0)),
+                    # --- 建议的稳健代码块 (替换原有的实例化参数) ---
+                    amount=float(row['amount']) * 1000 if row.get('amount') else 0.0,
+                    turnover=float(row.get('turnover_rate') or 0),
+                    vol_ratio=float(row.get('volume_ratio') or 0),
 
                     # 竞价数据
-                    auc_amt=auc_amt,
+                    auc_amt=float(row.get('auc_amt') or 0),  # 同样建议加上保护
                     auc_pct=final_auc_pct,
                     auc_ratio=auc_ratio,
                     call_auction_ratio=auc_ratio * 100,
