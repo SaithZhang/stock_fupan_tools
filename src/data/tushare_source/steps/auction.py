@@ -5,8 +5,9 @@ from .base import BaseDataStep
 class AuctionStep(BaseDataStep):
     """[P2] 云端竞价"""
 
-    def fetch(self, date_str, context):
-        print(f"   ├── [2/6] 获取云端竞价...", end="", flush=True)
+    def fetch(self, date_str, context, step_idx=0, total_steps=0, **kwargs):
+        prefix = f"[{step_idx}/{total_steps}]" if total_steps > 0 else "[2/?]"
+        print(f"   ├── {prefix} 获取云端竞价数据...", end="", flush=True)
         try:
             df = self.pro.stk_auction(trade_date=date_str, fields='ts_code,vol,amount,price,pre_close')
             if not df.empty:

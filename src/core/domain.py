@@ -50,6 +50,9 @@ class Stock:
     tags: List[str] = field(default_factory=list)
     risk_level: str = "🟢 Safe"
 
+    # 新增字段 (默认空字符串)
+    ths_hot_concept: str = ""
+
     @property
     def sina_code(self):
         market = self.ts_code.split('.')[-1].lower()

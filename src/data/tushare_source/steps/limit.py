@@ -5,8 +5,9 @@ from .base import BaseDataStep
 class LimitBoardStep(BaseDataStep):
     """[P3] 涨跌停"""
 
-    def fetch(self, date_str, context):
-        print(f"   ├── [3/6] 获取涨跌停榜单...", end="", flush=True)
+    def fetch(self, date_str, context, step_idx=0, total_steps=0, **kwargs):
+        prefix = f"[{step_idx}/{total_steps}]" if total_steps > 0 else "[3/?]"
+        print(f"   ├── {prefix} 获取涨跌停数据...", end="", flush=True)
         try:
             df_zt = self.pro.limit_list_ths(trade_date=date_str, limit_type='涨停池',
                                             fields='ts_code,tag,status,lu_desc')

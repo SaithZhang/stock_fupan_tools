@@ -5,8 +5,9 @@ from colorama import Fore
 class SentimentStep(BaseDataStep):
     """[P4] 市场热度 (同花顺/东方财富)"""
 
-    def fetch(self, date_str, context):
-        print(f"   ├── [4/6] 获取市场热度...", end="", flush=True)
+    def fetch(self, date_str, context, step_idx=0, total_steps=0, **kwargs):
+        prefix = f"[{step_idx}/{total_steps}]" if total_steps > 0 else "[4/?]"
+        print(f"   ├── {prefix} 获取市场热度...", end="", flush=True)
         hot_map = {}
 
         try:

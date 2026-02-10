@@ -12,8 +12,10 @@ class SmartMoneyStep(BaseDataStep):
     3. 📈 龙虎榜单 (top_list) - 获取上榜理由
     """
 
-    def fetch(self, date_str, context):
-        print(f"   ├── [5/6] 获取主力资金(游资/机构)...", end="", flush=True)
+    def fetch(self, date_str, context, step_idx=0, total_steps=0, **kwargs):
+        # 动态生成前缀
+        prefix = f"[{step_idx}/{total_steps}]" if total_steps > 0 else "[5/?]"
+        print(f"   ├── {prefix} 获取主力资金数据...", end="", flush=True)
 
         # 1. 游资明细
         hm_map = {}

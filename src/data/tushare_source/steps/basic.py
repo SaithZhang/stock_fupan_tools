@@ -5,8 +5,10 @@ from .base import BaseDataStep
 class BasicInfoStep(BaseDataStep):
     """[P1] 基础行情与昨收"""
 
-    def fetch(self, date_str, context):
-        print(f"   ├── [1/6] 获取基础行情...", end="", flush=True)
+    def fetch(self, date_str, context, step_idx=0, total_steps=0, **kwargs):        # 动态生成前缀
+        prefix = f"[{step_idx}/{total_steps}]" if total_steps > 0 else "[1/?]"
+        print(f"   ├── {prefix} 获取基础行情...", end="", flush=True)
+
         df_daily = self.pro.daily(trade_date=date_str)
         df_basic = self.pro.daily_basic(trade_date=date_str,
                                         fields='ts_code,turnover_rate,circ_mv,total_mv,volume_ratio')

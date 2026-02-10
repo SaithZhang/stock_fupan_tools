@@ -11,7 +11,7 @@ from src.data.tushare_source.steps.limit import LimitBoardStep
 from src.data.tushare_source.steps.sentiment import SentimentStep
 from src.data.tushare_source.steps.money import SmartMoneyStep
 from src.data.tushare_source.steps.chips import ChipStep
-
+from src.data.tushare_source.steps.ths_board import ThsBoardStep
 
 class StockDataPipeline:
     """
@@ -28,7 +28,9 @@ class StockDataPipeline:
             LimitBoardStep(self.pro),
             SentimentStep(self.pro),
             SmartMoneyStep(self.pro),
-            ChipStep(self.pro)
+            ChipStep(self.pro),
+            # ✅ 新增：同花顺板块分析
+            ThsBoardStep(self.pro)
         ]
 
     def run(self, date_str) -> list[Stock]:
@@ -37,9 +39,16 @@ class StockDataPipeline:
 
         ctx = {}  # 共享上下文
 
+        # ✅ 修改：动态计算总步数并传递
+        total_steps = len(self.steps)
+
         # 1. 依次执行采集 (Fetch)
-        for step in self.steps:
-            step.fetch(date_str, ctx)
+        for idx, step in enumerate(self.steps, 1):
+            # 将序号传给 fetch 方法
+            # 注意：大部分旧的 Step 如果没有定义接收参数，需要更新它们，
+            # 或者像上面 base.py 那样加了 **kwargs 后，旧 Step 不用改也能运行(只是不显示序号)
+            # 建议逐步把所有 Step 的 print 改成使用传入的 idx
+            step.fetch(date_str, ctx, step_idx=idx, total_steps=total_steps)
 
         if 'main_df' not in ctx or ctx['main_df'].empty:
             print(f" {Fore.RED}❌ 基础行情缺失，流水线终止{Fore.RESET}")
