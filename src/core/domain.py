@@ -30,21 +30,21 @@ class Stock:
     # --- 状态标记 ---
     is_zt: bool = False
     is_dt: bool = False
-    is_st: bool = False  # ✅ 新增：是否ST股
+    is_st: bool = False
     limit_days: int = 0
     limit_type: str = ""
     ths_status: str = ""
     is_broken: bool = False
     ths_desc: str = ""
 
-    # --- 扩展槽 ---
+    # --- 扩展槽 (用于存放未明确定义的临时数据) ---
     extra: Dict[str, Any] = field(default_factory=dict)
 
-    # --- 新增：筹码分布数据 (Chip Distribution) ---
+    # --- 筹码分布数据 (Chip Distribution) ---
     winner_rate: float = 0.0  # 获利盘比例 (胜率)
     cost_5pct: float = 0.0  # 5分位成本 (底部支撑)
-    cost_95pct: float = 0.0  # 95分位成本 (顶部压力/突破位)
-    weight_avg: float = 0.0  # 加权平均成本 (全市场平均持仓成本)
+    cost_95pct: float = 0.0  # 95分位成本 (顶部压力)
+    weight_avg: float = 0.0  # 加权平均成本
 
     # ✅ 新增：资金流向数据 (Money Flow) ---
     mf_net_amount: float = 0.0  # 当日净流入 (万元)
@@ -55,14 +55,15 @@ class Stock:
     # --- 策略结果 ---
     tags: List[str] = field(default_factory=list)
     risk_level: str = "🟢 Safe"
-
-    # 新增字段 (默认空字符串)
-    ths_hot_concept: str = ""
+    ths_hot_concept: str = ""  # 同花顺热门概念
 
     @property
     def sina_code(self):
-        market = self.ts_code.split('.')[-1].lower()
-        return f"{market}{self.code}"
+        # 兼容处理：有些代码可能是 "000001.SZ"
+        if '.' in self.ts_code:
+            market = self.ts_code.split('.')[-1].lower()
+            return f"{market}{self.code}"
+        return f"sz{self.code}" if self.code.startswith('0') or self.code.startswith('3') else f"sh{self.code}"
 
     @property
     def today_pct(self):
@@ -73,16 +74,26 @@ class Stock:
             self.tags.append(tag)
 
     def to_dict(self):
+        """
+        转换为字典，用于 DataFrame 生成或 JSON 序列化
+        """
+        # asdict 会自动把 dataclass 里定义的所有字段（包括新增的 mf_xxx）都转成字典
         base = asdict(self)
+
+        # 补充/覆盖一些计算字段
         base['today_pct'] = self.pct
         base['sina_code'] = self.sina_code
         base['tag'] = '/'.join(self.tags)
         base['limit_up_type'] = self.limit_type
-        del base['extra']
-        del base['tags']
+
+        # 移除不需要导出的内部字段
+        if 'extra' in base: del base['extra']
+        if 'tags' in base: del base['tags']
+
         return base
 
     def __getitem__(self, key):
+        """支持 stock['key'] 方式访问，兼容旧代码"""
         if hasattr(self, key):
             return getattr(self, key)
         if key in self.extra:

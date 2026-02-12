@@ -28,28 +28,28 @@ class ResultExporter:
         priority_cols = [
             'sina_code',
             'name',
-            'tag',  # 策略标签
+            'tag',               # 策略标签
             'price',
             'today_pct',
-            'limit_up_type',  # 涨停类型 (首板/连板)
-            'limit_days',  # 连板高度
-            'risk_level',  # 风险等级
+            'limit_up_type',     # 涨停类型 (首板/连板)
+            'limit_days',        # 连板高度
+            'risk_level',        # 风险等级
 
             # --- 🔥 核心资金数据 (重点) ---
-            'amount',  # 总成交额
-            'mf_lg_amount',  # 主力大单净流入 (万元)
-            'mf_net_amount',  # 资金净流入 (万元)
-            'mf_d5_amount',  # 5日主力净额 (万元)
+            'amount',            # 总成交额
+            'mf_lg_amount',      # 主力大单净流入 (万元)
+            'mf_net_amount',     # 资金净流入 (万元)
+            'mf_d5_amount',      # 5日主力净额 (万元)
 
             # --- 🔥 题材与热点 ---
-            'ths_hot_concept',  # 同花顺热点概念
+            'ths_hot_concept',   # 同花顺热点概念
 
             # --- 核心技术指标 ---
-            'turnover',  # 换手率
-            'call_auction_ratio',  # 竞价占比
-            'winner_rate',  # 获利盘比例
-            'cost_5pct',  # 底部支撑线
-            'cost_95pct',  # 顶部压力线
+            'turnover',          # 换手率
+            'call_auction_ratio',# 竞价占比
+            'winner_rate',       # 获利盘比例
+            'cost_5pct',         # 底部支撑线
+            'cost_95pct',        # 顶部压力线
         ]
 
         # ✅ 2. 智能重排列顺序
@@ -73,7 +73,7 @@ class ResultExporter:
 
         # 确保输出目录存在
         if not os.path.exists(Config.OUTPUT_DIR):
-            os.makedirs(Config.OUTPUT_DIR)
+            os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
 
         path_dated = os.path.join(Config.OUTPUT_DIR, f'strategy_pool_v2_{date_str}.csv')
         path_latest = os.path.join(Config.OUTPUT_DIR, 'strategy_pool.csv')
