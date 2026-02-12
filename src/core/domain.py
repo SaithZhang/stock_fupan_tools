@@ -46,6 +46,12 @@ class Stock:
     cost_95pct: float = 0.0  # 95分位成本 (顶部压力/突破位)
     weight_avg: float = 0.0  # 加权平均成本 (全市场平均持仓成本)
 
+    # ✅ 新增：资金流向数据 (Money Flow) ---
+    mf_net_amount: float = 0.0  # 当日净流入 (万元)
+    mf_lg_amount: float = 0.0  # 主力大单净流入 (万元)
+    mf_d5_amount: float = 0.0  # 5日主力净流入 (万元)
+    mf_sm_amount: float = 0.0  # 散户小单净流入 (万元)
+
     # --- 策略结果 ---
     tags: List[str] = field(default_factory=list)
     risk_level: str = "🟢 Safe"
