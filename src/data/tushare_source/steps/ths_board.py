@@ -18,7 +18,7 @@ class ThsBoardStep(BaseDataStep):
     def fetch(self, date_str: str, context: dict, step_idx=0, total_steps=0):
         # 动态打印步骤号
         prefix = f"[{step_idx}/{total_steps}]" if total_steps > 0 else "[7/?]"
-        print(f"   ├── {prefix} 行业与题材挖掘...", end="", flush=True)
+        print(f"   ├── {prefix} 行业与题材挖掘...",  end="", flush=True)
 
         try:
             # === 1. 保底：获取全市场基础行业 (5000+ 覆盖) ===
@@ -81,7 +81,7 @@ class ThsBoardStep(BaseDataStep):
 
             # 存入上下文
             context['ths_hot_map'] = full_map
-            print(f" ✅ (覆盖 {len(full_map)} 只, 热点叠加 {hot_info_count} 次)", end="")
+            print(f" ✅ (覆盖 {len(full_map)} 只, 热点叠加 {hot_info_count} 次)")
 
             # === 3. 落盘保存 (修复路径) ===
             self._save_to_json(full_map)
