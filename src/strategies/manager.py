@@ -21,7 +21,7 @@ from src.strategies.sentiment import (
     LHBStrategy
 )
 from src.strategies.bolao_chip_strategy import BoLaoChipStrategy
-
+from src.strategies.money_flow import MoneyFlowStrategy # 新增
 
 class StrategyManager:
     def __init__(self):
@@ -39,7 +39,9 @@ class StrategyManager:
             LHBStrategy(),  # 龙虎榜
 
             # --- 核心筹码博弈 ---
-            BoLaoChipStrategy()  # 拨佬筹码突破/支撑
+            BoLaoChipStrategy(), # 拨佬筹码突破/支撑
+            # --- 新增资金策略 ---
+            MoneyFlowStrategy()
         ]
 
     def run_all(self, stocks: List[Stock]) -> pd.DataFrame:

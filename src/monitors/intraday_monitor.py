@@ -119,16 +119,15 @@ class IntradayMonitor:
 
     def fetch_all_data(self):
         """并发获取：个股数据、大盘指数、板块数据"""
-        # 1. 实例化工具类 (关键修复：必须实例化才能调用方法)
+        # 1. 实例化工具类
         tr = TencentRealtime()
         emb = EastMoneyBlock()
 
         # 定义大盘指数代码
         indices_codes = ['sh000001', 'sz399001', 'sz399006', 'sh000688', 'sh000300']
 
-        # 2. 提交任务 (使用实例方法)
+        # 2. 提交任务
         tasks = {
-            # 注意：这里调用的是 tr.get_batch_quotes 而不是 fetch_quotes
             'stocks': self.executor.submit(tr.get_batch_quotes, list(self.target_codes)),
             'indices': self.executor.submit(tr.get_batch_quotes, indices_codes),
             'sectors': self.executor.submit(emb.fetch_all_sectors)
@@ -139,18 +138,33 @@ class IntradayMonitor:
             try:
                 results[key] = future.result()
             except Exception as e:
-                # 打印错误细节，方便排查板块加载问题
                 print(f"\n{Fore.RED}❌ 数据异常 [{key}]: {e}")
                 results[key] = None
 
-        # 3. 数据转换与字段对齐 (修复 KeyError: 'vol_ratio')
+        # 3. 数据转换与字段对齐
         if results.get('stocks'):
             # 将字典转换为 DataFrame
             df = pd.DataFrame.from_dict(results['stocks'], orient='index')
 
-            # 关键修复：如果存在 'vr' 列，重命名为 'vol_ratio' 以匹配后续逻辑
+            # --- 🛡️ 核心修复开始 ---
+            # 1. 尝试标准化列名 (兼容 'vr' 和 'vol_ratio')
             if 'vr' in df.columns:
                 df.rename(columns={'vr': 'vol_ratio'}, inplace=True)
+
+            # 2. 兜底检查：如果此时 'vol_ratio' 依然不存在，强制创建并填充 0.0
+            # 这能防止腾讯接口某次返回数据缺失导致整个监控崩溃
+            if 'vol_ratio' not in df.columns:
+                df['vol_ratio'] = 0.0
+            else:
+                # 即使列存在，也要填充可能出现的 NaN 值
+                df['vol_ratio'] = df['vol_ratio'].fillna(0.0)
+
+            # 3. 同样的逻辑检查其他关键字段 (可选，增强稳定性)
+            if 'turnover' not in df.columns:
+                df['turnover'] = 0.0
+            if 'amount' not in df.columns:
+                df['amount'] = 0.0
+            # --- 🛡️ 核心修复结束 ---
 
             # 确保 sina_code 存在
             df['sina_code'] = df.index

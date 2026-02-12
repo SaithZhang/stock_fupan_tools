@@ -12,6 +12,7 @@ from src.data.tushare_source.steps.sentiment import SentimentStep
 from src.data.tushare_source.steps.money import SmartMoneyStep
 from src.data.tushare_source.steps.chips import ChipStep
 from src.data.tushare_source.steps.ths_board import ThsBoardStep
+from src.data.tushare_source.steps.ths_moneyflow import ThsMoneyFlowStep
 
 class StockDataPipeline:
     """
@@ -30,7 +31,8 @@ class StockDataPipeline:
             SmartMoneyStep(self.pro),
             ChipStep(self.pro),
             # ✅ 新增：同花顺板块分析
-            ThsBoardStep(self.pro)
+            ThsBoardStep(self.pro),
+            ThsMoneyFlowStep(self.pro),
         ]
 
     def run(self, date_str) -> list[Stock]:
