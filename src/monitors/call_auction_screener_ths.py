@@ -84,7 +84,8 @@ def load_tushare_pool_and_history():
             if tag.lower() == 'nan': tag = ""
             if tag: pool_map[code] = tag
 
-            pct_val = row.get('pct_chg', row.get('昨日涨幅', row.get('涨跌幅', 0)))
+            # ✅ 修改后：直接对应 domain.py 导出的列名
+            pct_val = row.get('pct', row.get('today_pct', 0))
             yest_pct = float(pct_val) if pd.notna(pct_val) and str(pct_val).strip() and str(
                 pct_val).strip().lower() != 'nan' else 0.0
 
@@ -96,8 +97,9 @@ def load_tushare_pool_and_history():
             elif limit_val.isdigit():
                 boards = int(limit_val)
 
-            industry = str(row.get('industry', row.get('ths_board', row.get('行业', '未知'))))
-            if industry == 'nan': industry = '未知'
+            # ✅ 修改后：对应 CSV 里的 ths_hot_concept
+            industry = str(row.get('ths_hot_concept', row.get('industry', '未知')))
+            if industry == 'nan' or not industry: industry = '未知'
 
             # 💡 Tushare 底库兜底市值 (解决同花顺懒加载空值问题)
             circ_mv = parse_chinese_money(
