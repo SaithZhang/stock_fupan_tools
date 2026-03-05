@@ -60,6 +60,7 @@ def parse_pct(val):
 
 
 # ================= 1. 加载 Tushare 盘后底库与策略池 =================
+# ================= 1. 加载 Tushare 盘后底库与策略池 =================
 def load_tushare_pool_and_history():
     print(f"{Fore.CYAN}📂 [1/3] 正在加载 Tushare 盘后底库 (strategy_pool.csv)...{Style.RESET_ALL}")
     pool_path = os.path.join(PROJECT_ROOT, 'data', 'output', 'strategy_pool.csv')
@@ -84,7 +85,7 @@ def load_tushare_pool_and_history():
             if tag.lower() == 'nan': tag = ""
             if tag: pool_map[code] = tag
 
-            # ✅ 修改后：直接对应 domain.py 导出的列名
+            # 💡 修正1：精准映射昨天的涨幅 (CSV里叫 pct 或 today_pct)
             pct_val = row.get('pct', row.get('today_pct', 0))
             yest_pct = float(pct_val) if pd.notna(pct_val) and str(pct_val).strip() and str(
                 pct_val).strip().lower() != 'nan' else 0.0
@@ -97,7 +98,7 @@ def load_tushare_pool_and_history():
             elif limit_val.isdigit():
                 boards = int(limit_val)
 
-            # ✅ 修改后：对应 CSV 里的 ths_hot_concept
+            # 💡 修正2：精准映射所属行业 (CSV里叫 ths_hot_concept)
             industry = str(row.get('ths_hot_concept', row.get('industry', '未知')))
             if industry == 'nan' or not industry: industry = '未知'
 
@@ -288,9 +289,11 @@ def analyze_stock(row, history_info, pool_map):
             decision = f"{Fore.YELLOW}⚠️ 高开风险{Style.RESET_ALL}"
             score = 60
 
+    # ✅ 替换为：
     if code in pool_map:
         if score < 80: score += 10
-        display_tag = pool_tag if len(pool_tag) <= 10 else pool_tag[:10] + '..'
+        # 💡 解除截断，全量保留标签，喂给 AI 最完整的数据
+        display_tag = pool_tag
         decision += f" {Back.MAGENTA}{Fore.WHITE} [{display_tag}] {Style.RESET_ALL}"
         if fail_msg:
             decision = f"{Fore.YELLOW}{fail_msg} [{display_tag}]{Style.RESET_ALL}"
@@ -384,13 +387,13 @@ def main():
         mv_val = item.get('circ_mv', 0)
         mv_str = "未知" if mv_val == 0 else (f"{mv_val / 10000.0:.1f}亿" if mv_val > 10000 else f"{int(mv_val)}万")
 
+        # 💡 解除题材截断，全量输出
         industry = item.get('sector_info', '未知')
-        if len(industry) > 6: industry = industry[:5] + '..'
 
         print(
-            f"{item['code']:<8} {item['name'][:4]:<8} {c_open}{item['open_pct']:>6.2f}{Style.RESET_ALL} "
+            f"{item['code']:<8} {item['name']:<6} {c_open}{item['open_pct']:>6.2f}{Style.RESET_ALL} "
             f"{c_yest}{yest_pct:>6.1f}{Style.RESET_ALL} {boards_str:<6} {mv_str:<8} {yest_str:<8} "
-            f"{industry:<12} {item['decision']} 现额:{auc_str}"
+            f"{industry}  {item['decision']} 现额:{auc_str}"
         )
 
     if count == 0:
