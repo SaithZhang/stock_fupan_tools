@@ -1,6 +1,6 @@
 # ==============================================================================
 # 📌 F佬/Bo佬 智能盘中监控系统 (src\monitors\call_auction_screener.py)
-# v7.0 极简降噪版 - (优先级置顶 + 暴力除杂 + 弱转强聚焦)
+# v7.1 极简防雷版 - (增加“巨量滞涨”派发识别，严控回撤)
 # ==============================================================================
 import pandas as pd
 import os
@@ -209,6 +209,10 @@ def analyze_stock(row, history_info, pool_map, is_holding, is_focus):
     decision = "观察"
     fail_msg = ""
 
+    # -- 💣 防雷雷达：巨量滞涨派发陷阱 (用少盈利换回撤低) --
+    # 特征：竞价极其爆量(>5000万)，但涨幅却被压制在-3%到3%之间，且是大容量盘子(昨额>10亿)
+    is_distribution_trap = (auc_amt >= 5000) and (-3.0 <= open_pct < 3.0) and (last_amt >= 10000)
+
     # -- 弱转强核心战法判定 --
     # 情况A：昨天水下/微红，今天竞价抢筹高开 (>1.5%)，且竞价爆量 (>1500万)
     is_weak_to_strong = (yest_pct < 4.0 and open_pct > 1.5 and auc_amt > 1500)
@@ -217,9 +221,14 @@ def analyze_stock(row, history_info, pool_map, is_holding, is_focus):
         if open_pct > 0.0 and auc_amt > 1000:
             is_weak_to_strong = True
 
+    # ---------- 核心决策树 (优先级由高到低) ----------
     if open_pct > 9.8:
         score = 80 if is_focus else 0  # 除非关注，否则一字板不看(买不到)
         decision = f"{Fore.BLUE}🔒 一字板加速{Style.RESET_ALL}"
+    elif is_distribution_trap:
+        # ⚠️ 第一优先级拦截陷阱：坚决回避巨量滞涨
+        decision = f"{Fore.RED}💣 巨量滞涨(派发大坑/快跑){Style.RESET_ALL}"
+        score = 30  # 极低分，非持仓标的将直接被抹杀屏蔽
     elif is_weak_to_strong:
         decision = f"{Fore.MAGENTA}🚀 弱转强抢筹{Style.RESET_ALL}"
         score = 95
@@ -237,7 +246,7 @@ def analyze_stock(row, history_info, pool_map, is_holding, is_focus):
     # 加分项
     if pool_tag: score += 10
     if is_focus: score += 15
-    if is_holding: score = 100  # 持仓满分，强制显示
+    if is_holding: score = 100  # 持仓无视分数，强制显现
 
     if code in pool_map and pool_tag:
         decision += f" {Back.MAGENTA}{Fore.WHITE}[{pool_tag}]{Style.RESET_ALL}"
@@ -251,7 +260,7 @@ def analyze_stock(row, history_info, pool_map, is_holding, is_focus):
 
 
 def main():
-    print(f"\n{Back.BLUE}{Fore.WHITE} F佬 · 盘中实时监控系统 (极简强基版 v7.0) {Style.RESET_ALL}")
+    print(f"\n{Back.BLUE}{Fore.WHITE} F佬 · 盘中实时监控系统 (极简防雷版 v7.1) {Style.RESET_ALL}")
     print("=" * 145)
 
     history_map, pool_map = load_tushare_pool_and_history()
@@ -261,7 +270,7 @@ def main():
     live_df = get_live_data()
     if live_df.empty: return
 
-    print(f"{Fore.CYAN}⚙️ [3/3] 正在执行【除杂降噪】与【弱转强穿透】...{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}⚙️ [3/3] 正在执行【除杂降噪】与【派发防雷穿透】...{Style.RESET_ALL}")
 
     results = []
     seen_codes = set()
@@ -306,14 +315,14 @@ def main():
         if count > 0: print(f"  - {reason}: 拦截了 {count} 只无效标的")
 
     print("=" * 145)
-    print(f"📊 精锐监控池 | 扫描总数: {len(live_df)} | {Fore.GREEN}高度聚焦弱转强与持仓{Style.RESET_ALL}")
+    print(f"📊 精锐监控池 | 扫描总数: {len(live_df)} | {Fore.GREEN}高度聚焦弱转强与持仓防雷{Style.RESET_ALL}")
     print(
         f"{'代码':<8} {'名称':<6} {'竞价%':>6} {'现幅%':>6} {'昨幅%':>6}   {'竞价额':<8} {'连板':<4} {'市值':<8} {'昨额':<8} {'所属行业'}  {'AI决策与流向标签'}")
     print("-" * 155)
 
     display_count = 0
     for item in results:
-        # 🔪 核心过滤：非持仓、非关注的票，置信分必须 >= 85 才配显示 (过滤掉大量鸡肋)
+        # 🔪 核心过滤：非持仓、非关注的票，置信分必须 >= 85 才配显示 (这会完美过滤掉触发了防雷机制的非持仓票)
         if not item['is_holding'] and not item['is_focus'] and item['score'] < 85:
             continue
 
