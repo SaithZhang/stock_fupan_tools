@@ -1,6 +1,6 @@
 # ==============================================================================
 # 📌 F佬/Bo佬 智能盘中监控系统 (src\monitors\call_auction_screener.py)
-# v4.9 完美闭环版 - (非空序列锚定解析法，绝对免疫同花顺错位平移)
+# v5.0 复盘演练强化版 - (增加现幅%、竞价额前置，方便盘后回测验证)
 # ==============================================================================
 import pandas as pd
 import os
@@ -60,7 +60,6 @@ def parse_pct(val):
 
 
 # ================= 1. 加载 Tushare 盘后底库与策略池 =================
-# ================= 1. 加载 Tushare 盘后底库与策略池 =================
 def load_tushare_pool_and_history():
     print(f"{Fore.CYAN}📂 [1/3] 正在加载 Tushare 盘后底库 (strategy_pool.csv)...{Style.RESET_ALL}")
     pool_path = os.path.join(PROJECT_ROOT, 'data', 'output', 'strategy_pool.csv')
@@ -85,7 +84,7 @@ def load_tushare_pool_and_history():
             if tag.lower() == 'nan': tag = ""
             if tag: pool_map[code] = tag
 
-            # 💡 修正1：精准映射昨天的涨幅 (CSV里叫 pct 或 today_pct)
+            # 💡 精准映射昨天的涨幅 (CSV里叫 pct 或 today_pct)
             pct_val = row.get('pct', row.get('today_pct', 0))
             yest_pct = float(pct_val) if pd.notna(pct_val) and str(pct_val).strip() and str(
                 pct_val).strip().lower() != 'nan' else 0.0
@@ -98,7 +97,7 @@ def load_tushare_pool_and_history():
             elif limit_val.isdigit():
                 boards = int(limit_val)
 
-            # 💡 修正2：精准映射所属行业 (CSV里叫 ths_hot_concept)
+            # 💡 精准映射所属行业 (CSV里叫 ths_hot_concept)
             industry = str(row.get('ths_hot_concept', row.get('industry', '未知')))
             if industry == 'nan' or not industry: industry = '未知'
 
@@ -176,7 +175,6 @@ def load_call_auction_data_from_file():
         if len(lines) < 2: return None
 
         # 💡 终极绝招：非空序列锚定法
-        # 1. 提取所有有意义的表头（剔除同花顺用来排版的幽灵空列）
         headers = [h.strip() for h in lines[0].split('\t') if h.strip()]
 
         data_list = []
@@ -184,15 +182,11 @@ def load_call_auction_data_from_file():
             line = line.strip('\r\n')
             if not line: continue
 
-            # 2. 提取所有有意义的数据项（按制表符分割，只取非空。完美保留Micro LED内部的空格）
             parts = [p.strip() for p in line.split('\t') if p.strip()]
-
             if not parts: continue
 
-            # 3. 按序装配数据
             row_dict = {}
             for i, h in enumerate(headers):
-                # 前8-10列核心数据绝不可能出现空白跨列，百分百精准对齐
                 row_dict[h] = parts[i] if i < len(parts) else ""
 
             data_list.append(row_dict)
@@ -225,7 +219,16 @@ def analyze_stock(row, history_info, pool_map):
     name = row.get('name')
 
     try:
-        open_pct = parse_pct(row.get('竞价涨幅', row.get('涨幅', row.get('open_pct', 0))))
+        # 如果是盘中/盘后，"涨幅"列代表的是全天的现价涨幅，"竞价涨幅"代表9:25的涨幅
+        auc_pct_raw = row.get('竞价涨幅', '')
+        if not auc_pct_raw or pd.isna(auc_pct_raw) or auc_pct_raw == '--':
+            auc_pct_raw = row.get('涨幅', row.get('open_pct', 0))
+
+        open_pct = parse_pct(auc_pct_raw)
+
+        # 💡 新增：读取盘中/盘后的现价涨幅 (用于复盘看实际走势)
+        real_pct = parse_pct(row.get('涨幅', row.get('pct', 0)))
+
         auc_amt = parse_chinese_money(row.get('竞价金额', row.get('auc_amt', 0)))
         last_amt_export = parse_chinese_money(row.get('昨日成交额', row.get('昨成交', row.get('last_amt', 0))))
         circ_mv_export = parse_chinese_money(row.get('流通市值', 0))
@@ -234,14 +237,12 @@ def analyze_stock(row, history_info, pool_map):
 
     info = history_info.get(code, {})
 
-    # 💡 完美兜底：即使 TXT 里读出来市值是 0（被懒加载截断），自动无缝采用 Tushare 底库的市值
     circ_mv = circ_mv_export if circ_mv_export > 0 else info.get('circ_mv', 0)
     last_amt = last_amt_export if last_amt_export > 0 else info.get('yest_amt', 0)
     yest_pct = info.get('yest_pct', 0)
     boards = info.get('boards', 0)
     industry = info.get('industry', '未知')
 
-    # 计算量比等核心指标 (无视0引发的拦截，让子弹飞)
     ratio_yest = (auc_amt / last_amt * 100) if last_amt > 0 else 0
     ratio_mv = (auc_amt / circ_mv * 100) if circ_mv > 0 else 0
 
@@ -260,7 +261,7 @@ def analyze_stock(row, history_info, pool_map):
         if code in pool_map: score = 90
         return {
             'code': code, 'name': name, 'score': score, 'decision': f"{Fore.BLUE}一字板{Style.RESET_ALL}",
-            'open_pct': open_pct, 'auc': auc_amt, 'yest_pct': yest_pct, 'boards': boards,
+            'open_pct': open_pct, 'real_pct': real_pct, 'auc': auc_amt, 'yest_pct': yest_pct, 'boards': boards,
             'r_mv': ratio_mv, 'circ_mv': circ_mv, 'sector_info': industry, 'last_amt': last_amt, 'tag': pool_tag
         }
 
@@ -272,7 +273,6 @@ def analyze_stock(row, history_info, pool_map):
             decision = f"{Fore.GREEN}✅ 资金底背离低吸{Style.RESET_ALL}"
             score = 88
     elif "连板" in pool_tag or "龙头" in pool_tag:
-        # 当市值依然获取不到(极少概率), 但竞价有1000万，也强行通过！
         if open_pct < 3.0 and (ratio_mv > 0.8 or (circ_mv == 0 and auc_amt > 1000)):
             decision = f"{Fore.MAGENTA}★ 龙头弱转强{Style.RESET_ALL}"
             score = 95
@@ -289,10 +289,8 @@ def analyze_stock(row, history_info, pool_map):
             decision = f"{Fore.YELLOW}⚠️ 高开风险{Style.RESET_ALL}"
             score = 60
 
-    # ✅ 替换为：
     if code in pool_map:
         if score < 80: score += 10
-        # 💡 解除截断，全量保留标签，喂给 AI 最完整的数据
         display_tag = pool_tag
         decision += f" {Back.MAGENTA}{Fore.WHITE} [{display_tag}] {Style.RESET_ALL}"
         if fail_msg:
@@ -305,7 +303,7 @@ def analyze_stock(row, history_info, pool_map):
 
     return {
         'code': code, 'name': name, 'score': score, 'decision': decision,
-        'open_pct': open_pct, 'auc': auc_amt, 'r_mv': ratio_mv, 'yest_pct': yest_pct,
+        'open_pct': open_pct, 'real_pct': real_pct, 'auc': auc_amt, 'r_mv': ratio_mv, 'yest_pct': yest_pct,
         'boards': boards, 'circ_mv': circ_mv, 'tag': pool_tag, 'sector_info': industry, 'last_amt': last_amt
     }
 
@@ -357,48 +355,58 @@ def main():
 
     results.sort(key=lambda x: (x['score'], x['open_pct']), reverse=True)
 
-    print("\n" + "=" * 135)
+    print("\n" + "=" * 145)
     print(f"{Fore.YELLOW}🛡️ 策略流水线拦截明细：{Style.RESET_ALL}")
     for reason, count in filter_stats.items():
         if count > 0: print(f"  - {reason}: 过滤了 {count} 只标的")
 
-    print("=" * 135)
+    print("=" * 145)
     print(f"📊 实时监控池 | 扫描总数: {len(live_df)} | 命中策略: {len(results)}")
+
+    # 💡 修改表头排版：增加现幅% 和 竞价额
     print(
-        f"{'代码':<8} {'名称':<8} {'竞价%':<6} {'昨幅%':<6} {'连板':<6} {'市值':<8} {'昨额':<8} {'所属行业':<12} {'AI决策与流向标签'}")
-    print("-" * 140)
+        f"{'代码':<8} {'名称':<6} {'竞价%':<6} {'现幅%':<6} {'昨幅%':<6} {'竞价额':<8} {'连板':<5} {'市值':<8} {'昨额':<8} {'所属行业'}  {'AI决策与流向标签'}")
+    print("-" * 155)
 
     count = 0
     for item in results:
         if item['score'] < 40: continue
         count += 1
+
+        # 色彩逻辑
+        c_open = Fore.RED if item['open_pct'] > 0 else (Fore.GREEN if item['open_pct'] < 0 else Fore.WHITE)
+        real_pct = item.get('real_pct', 0.0)
+        c_real = Fore.RED if real_pct > 0 else (Fore.GREEN if real_pct < 0 else Fore.WHITE)
+        yest_pct = item.get('yest_pct', 0)
+        c_yest = Fore.RED if yest_pct > 0 else (Fore.GREEN if yest_pct < 0 else Fore.WHITE)
+
         auc_str = f"{int(item['auc'])}万"
 
         yest_amt_val = item.get('last_amt', 0)
         yest_str = "未知" if yest_amt_val == 0 else (
             f"{yest_amt_val / 10000:.1f}亿" if yest_amt_val > 10000 else f"{int(yest_amt_val)}万")
 
-        yest_pct = item.get('yest_pct', 0)
-        c_yest = Fore.RED if yest_pct > 0 else Fore.GREEN
-        c_open = Fore.RED if item['open_pct'] > 0 else Fore.GREEN
         boards = item.get('boards', 0)
         boards_str = f"{Fore.RED}{boards}板{Style.RESET_ALL}" if boards >= 2 else ""
 
         mv_val = item.get('circ_mv', 0)
         mv_str = "未知" if mv_val == 0 else (f"{mv_val / 10000.0:.1f}亿" if mv_val > 10000 else f"{int(mv_val)}万")
 
-        # 💡 解除题材截断，全量输出
         industry = item.get('sector_info', '未知')
 
+        # 💡 重新排列输出格式，去掉末尾多余的现额
         print(
             f"{item['code']:<8} {item['name']:<6} {c_open}{item['open_pct']:>6.2f}{Style.RESET_ALL} "
-            f"{c_yest}{yest_pct:>6.1f}{Style.RESET_ALL} {boards_str:<6} {mv_str:<8} {yest_str:<8} "
-            f"{industry}  {item['decision']} 现额:{auc_str}"
+            f"{c_real}{real_pct:>6.2f}{Style.RESET_ALL} "
+            f"{c_yest}{yest_pct:>6.1f}{Style.RESET_ALL} "
+            f"{Fore.YELLOW}{auc_str:<8}{Style.RESET_ALL} "
+            f"{boards_str:<5} {mv_str:<8} {yest_str:<8} "
+            f"{industry}  {item['decision']}"
         )
 
     if count == 0:
         print(f"{Fore.YELLOW}当前竞价无符合 Tushare 标签强共振标的。{Style.RESET_ALL}")
-    print("=" * 135)
+    print("=" * 145)
 
 
 if __name__ == "__main__":
