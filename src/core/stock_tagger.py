@@ -33,16 +33,38 @@ class StockTagger:
         if item.get('is_broken'):
             hit_tags.append("💣炸板")
 
-        # D. 竞价逻辑分析 (封装在这里，逻辑更清晰)
+        # D. 竞价逻辑分析 (精细化防雷与防误导)
         auc_ratio = item.get('auction_ratio', 0.0)
         auc_amt = item.get('auc_amt', 0)
+        # 兼容处理：尝试获取竞价涨幅，如果没有则用开盘涨幅兜底
+        auc_pct = item.get('auc_pct', item.get('open_pct', 0.0))
+        yest_pct = item.get('yest_pct', item.get('today_pct', 0.0))  # 昨天涨幅(若为复盘当日，即为当日涨幅的上一日)
 
-        if auc_ratio >= 0.10:
-            hit_tags.append("🔥竞价超预期")
-        elif auc_ratio >= 0.05:
-            hit_tags.append("⚡竞价达标")
-        if auc_amt > 100000000: hit_tags.append("💰竞价过亿")
-        if auc_ratio >= 0.05 and is_zt: hit_tags.append("🎯疑似弱转强")
+        # 1. 绝对金额过亿，主力入场标志
+        if auc_amt > 100000000:
+            hit_tags.append("💰竞价过亿")
+
+        # 2. 竞价达标与超预期 (设置绝对门槛：至少1000万以上才有资格谈量比)
+        if auc_amt >= 10000000:
+            if auc_ratio >= 0.10:
+                if auc_pct > 0:
+                    # 只有高开(红盘)，且结合昨日弱势/分歧，才是真正的超预期
+                    if yest_pct < 5.0 and auc_pct > 1.5:
+                        hit_tags.append("🔥竞价超预期")
+                    else:
+                        hit_tags.append("🔥竞价爆量抢筹")  # 涨幅不够大或昨天已经很强，只能叫爆量
+                elif auc_pct < -2.0:
+                    # 水下爆量，这是核按钮抢跑的危险信号
+                    hit_tags.append("💣竞价爆量砸盘")
+            elif auc_ratio >= 0.05 and auc_pct > 0:
+                hit_tags.append("⚡竞价达标")
+
+        # 3. 弱转强判定 (昨弱今强)
+        # 昨天没涨停（甚至大分歧），今天高开有量
+        if auc_ratio >= 0.05 and auc_pct >= 1.5 and yest_pct < 4.0:
+            hit_tags.append("🎯疑似弱转强")
+        elif auc_ratio >= 0.05 and is_zt:
+            hit_tags.append("🎯涨停承接达标")
 
         # E. 人气/容量兜底
         is_capacity_stock = (item['amount'] > self.top_amount_threshold) and (item['today_pct'] > 0)
