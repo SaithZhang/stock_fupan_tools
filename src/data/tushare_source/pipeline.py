@@ -111,6 +111,11 @@ class StockDataPipeline:
             amount=float(row['amount']) * 1000 if row.get('amount') else 0.0,
             turnover=float(row.get('turnover_rate') or 0),
             vol_ratio=float(row.get('volume_ratio') or 0),
+
+            # ✅ 新增：在装配时注入流通市值与总市值
+            circ_mv=float(row.get('circ_mv') or 0.0),
+            total_mv=float(row.get('total_mv') or 0.0),
+
             auc_amt=float(row.get('auc_amt') or 0),
             auc_pct=float(final_auc_pct or 0),
             auc_ratio=auc_ratio,

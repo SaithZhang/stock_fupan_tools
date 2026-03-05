@@ -65,7 +65,10 @@ class TencentRealtime:
 
         def fetch_chunk(chunk):
             try:
-                url = self.BASE_URL + ",".join(chunk)
+                import time  # 引入 time 模块生成时间戳
+                # 核心修复：添加 &_r=时间戳 参数，强制绕过腾讯 CDN 缓存
+                url = self.BASE_URL + ",".join(chunk) + f"&_r={time.time()}"
+
                 # 设置超时，防止卡死
                 res = requests.get(url, timeout=3)
                 # 腾讯接口通常是 gbk 编码

@@ -21,6 +21,10 @@ class Stock:
     turnover: float = 0.0
     vol_ratio: float = 0.0
 
+    # ✅ 新增：市值数据 (万元) ---
+    circ_mv: float = 0.0  # 流通市值
+    total_mv: float = 0.0  # 总市值
+
     # --- 竞价数据 ---
     auc_amt: float = 0.0
     auc_pct: float = 0.0
@@ -46,7 +50,7 @@ class Stock:
     cost_95pct: float = 0.0  # 95分位成本 (顶部压力)
     weight_avg: float = 0.0  # 加权平均成本
 
-    # ✅ 新增：资金流向数据 (Money Flow) ---
+    # --- 资金流向数据 (Money Flow) ---
     mf_net_amount: float = 0.0  # 当日净流入 (万元)
     mf_lg_amount: float = 0.0  # 主力大单净流入 (万元)
     mf_d5_amount: float = 0.0  # 5日主力净流入 (万元)
@@ -77,7 +81,7 @@ class Stock:
         """
         转换为字典，用于 DataFrame 生成或 JSON 序列化
         """
-        # asdict 会自动把 dataclass 里定义的所有字段（包括新增的 mf_xxx）都转成字典
+        # asdict 会自动把 dataclass 里定义的所有字段（包括新增的 circ_mv）都转成字典
         base = asdict(self)
 
         # 补充/覆盖一些计算字段

@@ -1,10 +1,11 @@
 # ==============================================================================
 # 🏭 策略工厂 V3.5 (src/core/pool_generator_tushare.py)
-# Version: 3.5 (Tag Fusion Fix - Preserve Fetcher Tags)
+# Version: 3.5 (Tag Fusion Fix - Preserve Fetcher Tags + Manual Date)
 # ==============================================================================
 
 import os
 import sys
+import argparse
 from colorama import init, Fore
 from typing import List
 
@@ -41,7 +42,7 @@ except ImportError as e:
 
 
 class PoolGeneratorV3:
-    def __init__(self):
+    def __init__(self, target_date: str = None):
         self.pro = TushareClient.get_pro()
         self.fetcher = TushareFetcher()
         self.md_manager = MarketDataManager()
@@ -56,25 +57,31 @@ class PoolGeneratorV3:
         self.top_amount_threshold = 0
         self.risk_map = {}
 
+        # 记录目标日期
+        self.target_date = target_date
+
     def load_resources(self) -> bool:
         print(f"{Fore.CYAN}📥 [1/4] Tushare Pro 资源加载...")
 
-        target_date = DateUtils.get_smart_trading_date(self.pro)
-        print(f"   📅 锁定复盘日期: {Fore.YELLOW}{target_date}{Fore.RESET}")
+        # 核心逻辑：如果有手动传入日期则使用，否则自动推算
+        if not self.target_date:
+            self.target_date = DateUtils.get_smart_trading_date(self.pro)
+
+        print(f"   📅 锁定复盘日期: {Fore.YELLOW}{self.target_date}{Fore.RESET}")
 
         # 1. 指数
-        index_data = self.fetcher.market.fetch_index(target_date)
+        index_data = self.fetcher.market.fetch_index(self.target_date)
         self.md_manager.update_indices(index_data)
 
         # 2. 全市场数据 (个股流水线)
-        self.all_data = self.fetcher.stocks.run(target_date)
+        self.all_data = self.fetcher.stocks.run(self.target_date)
 
         if not self.all_data:
             print(f"{Fore.RED}❌ 数据拉取失败")
             return False
 
         # 3. 同花顺概览
-        ths_stats = self.fetcher.market.fetch_limit_stats(target_date)
+        ths_stats = self.fetcher.market.fetch_limit_stats(self.target_date)
         self.md_manager.update_stats(ths_stats)
 
         # 4. Top50 门槛
@@ -92,7 +99,7 @@ class PoolGeneratorV3:
         self.risk_map = SystemDataLoader.load_risk_data()
 
         try:
-            df_lhb = self.pro.top_list(trade_date=target_date)
+            df_lhb = self.pro.top_list(trade_date=self.target_date)
             if not df_lhb.empty:
                 self.context['lhb_codes'] = set(df_lhb['ts_code'].apply(lambda x: x.split('.')[0]).tolist())
         except:
@@ -173,7 +180,8 @@ class PoolGeneratorV3:
         print(f"   💎 最终入池: {len(results_pool)} 只")
 
         # 获取统计数据 (用于大盘分析)
-        ths_stats = self.fetcher.market.fetch_limit_stats(DateUtils.get_smart_trading_date(self.pro))
+        # ⚠️ 修复点：这里原来硬编码了 DateUtils，现替换为统一的 self.target_date
+        ths_stats = self.fetcher.market.fetch_limit_stats(self.target_date)
 
         phase_info = MarketAnalyzer.analyze_phase(results_pool, ths_stats)
         self.md_manager.update_stats(phase_info)
@@ -183,5 +191,10 @@ class PoolGeneratorV3:
 
 
 if __name__ == "__main__":
-    generator = PoolGeneratorV3()
+    parser = argparse.ArgumentParser(description="策略工厂 V3.5")
+    parser.add_argument('--date', type=str, help='手动指定复盘日期，格式: YYYYMMDD, 例如 20260305', default=None)
+    args = parser.parse_args()
+
+    # 传入解析到的日期（如果没传就是 None）
+    generator = PoolGeneratorV3(target_date=args.date)
     generator.run_pipeline()
