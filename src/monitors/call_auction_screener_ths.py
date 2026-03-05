@@ -1,6 +1,6 @@
 # ==============================================================================
 # 📌 F佬/Bo佬 智能盘中监控系统 (src\monitors\call_auction_screener.py)
-# v5.0 复盘演练强化版 - (增加现幅%、竞价额前置，方便盘后回测验证)
+# v6.0 盘后回测与盘中自适应强化版
 # ==============================================================================
 import pandas as pd
 import os
@@ -40,18 +40,18 @@ def parse_chinese_money(val):
 
     try:
         if '亿' in val_str:
-            return float(val_str.replace('亿', '').replace('万', '').strip()) * 10000.0
+            return float(val_str.replace('亿', '').replace('万', '').replace('+', '').strip()) * 10000.0
         elif '万' in val_str:
-            return float(val_str.replace('万', '').strip())
+            return float(val_str.replace('万', '').replace('+', '').strip())
         else:
-            return float(val_str)
+            return float(val_str.replace('+', ''))
     except:
         return 0.0
 
 
 def parse_pct(val):
     if pd.isna(val): return 0.0
-    val_str = str(val).strip().replace('%', '')
+    val_str = str(val).strip().replace('%', '').replace('+', '')
     if not val_str or val_str == '--' or val_str.lower() == 'nan': return 0.0
     try:
         return float(val_str)
@@ -84,10 +84,9 @@ def load_tushare_pool_and_history():
             if tag.lower() == 'nan': tag = ""
             if tag: pool_map[code] = tag
 
-            # 💡 精准映射昨天的涨幅 (CSV里叫 pct 或 today_pct)
-            pct_val = row.get('pct', row.get('today_pct', 0))
-            yest_pct = float(pct_val) if pd.notna(pct_val) and str(pct_val).strip() and str(
-                pct_val).strip().lower() != 'nan' else 0.0
+            # 💡 精准映射昨天的涨幅 (覆盖 Tushare 的多种字段变体)
+            pct_val = row.get('pct_chg', row.get('涨跌幅', row.get('pct', row.get('today_pct', 0))))
+            yest_pct = parse_pct(pct_val)
 
             limit_val = str(row.get('limit_status', row.get('连板数', row.get('连板高度', '0'))))
             boards = 0
@@ -97,11 +96,9 @@ def load_tushare_pool_and_history():
             elif limit_val.isdigit():
                 boards = int(limit_val)
 
-            # 💡 精准映射所属行业 (CSV里叫 ths_hot_concept)
             industry = str(row.get('ths_hot_concept', row.get('industry', '未知')))
             if industry == 'nan' or not industry: industry = '未知'
 
-            # 💡 Tushare 底库兜底市值 (解决同花顺懒加载空值问题)
             circ_mv = parse_chinese_money(
                 row.get('circ_mv', row.get('float_mv', row.get('流通市值', row.get('total_mv', row.get('总市值', 0))))))
             if circ_mv > 100000000:
@@ -174,7 +171,6 @@ def load_call_auction_data_from_file():
         lines = content.strip().split('\n')
         if len(lines) < 2: return None
 
-        # 💡 终极绝招：非空序列锚定法
         headers = [h.strip() for h in lines[0].split('\t') if h.strip()]
 
         data_list = []
@@ -195,7 +191,7 @@ def load_call_auction_data_from_file():
 
         code_col = '代码' if '代码' in df.columns else ('code' if 'code' in df.columns else None)
         if code_col and not df.empty:
-            print(f"✅ 从 {filename} 成功加载 {len(df)} 条竞价数据 (彻底告别平移错位！)")
+            print(f"✅ 从 {filename} 成功加载 {len(df)} 条竞价数据 (适配最新实时列头！)")
             df['code'] = df[code_col].apply(lambda x: re.sub(r'\D', '', str(x)).zfill(6))
             df['name'] = df.get('名称', df.get('name', '未知'))
             return df
@@ -219,28 +215,38 @@ def analyze_stock(row, history_info, pool_map):
     name = row.get('name')
 
     try:
-        # 如果是盘中/盘后，"涨幅"列代表的是全天的现价涨幅，"竞价涨幅"代表9:25的涨幅
+        # 💡 逻辑穿透：盘后回测时，`竞价涨幅`才是早上9:25的信号，若无则降维取`涨幅`
         auc_pct_raw = row.get('竞价涨幅', '')
         if not auc_pct_raw or pd.isna(auc_pct_raw) or auc_pct_raw == '--':
             auc_pct_raw = row.get('涨幅', row.get('open_pct', 0))
-
         open_pct = parse_pct(auc_pct_raw)
 
-        # 💡 新增：读取盘中/盘后的现价涨幅 (用于复盘看实际走势)
+        # 💡 `现幅%` 强制锚定 `涨幅` (盘后回测时，这就是全天收盘的最终涨幅)
         real_pct = parse_pct(row.get('涨幅', row.get('pct', 0)))
 
+        # 💡 优先抓取新导出的金额及市值维度
         auc_amt = parse_chinese_money(row.get('竞价金额', row.get('auc_amt', 0)))
         last_amt_export = parse_chinese_money(row.get('昨日成交额', row.get('昨成交', row.get('last_amt', 0))))
         circ_mv_export = parse_chinese_money(row.get('流通市值', 0))
+        boards_export = str(row.get('连续涨停天数', '')).strip()
+        yest_pct_export = parse_pct(row.get('昨日涨跌幅', row.get('昨幅', 0)))
     except Exception as e:
         return {'fail_reason': f'数据解析异常: {e}'}
 
     info = history_info.get(code, {})
 
+    # 优先使用实时表头的数据，若无则兜底 Tushare 底库
     circ_mv = circ_mv_export if circ_mv_export > 0 else info.get('circ_mv', 0)
     last_amt = last_amt_export if last_amt_export > 0 else info.get('yest_amt', 0)
-    yest_pct = info.get('yest_pct', 0)
-    boards = info.get('boards', 0)
+
+    yest_pct = yest_pct_export if yest_pct_export != 0 else info.get('yest_pct', 0)
+
+    boards = 0
+    if boards_export and boards_export.isdigit():
+        boards = int(boards_export)
+    else:
+        boards = info.get('boards', 0)
+
     industry = info.get('industry', '未知')
 
     ratio_yest = (auc_amt / last_amt * 100) if last_amt > 0 else 0
@@ -363,9 +369,8 @@ def main():
     print("=" * 145)
     print(f"📊 实时监控池 | 扫描总数: {len(live_df)} | 命中策略: {len(results)}")
 
-    # 💡 修改表头排版：增加现幅% 和 竞价额
     print(
-        f"{'代码':<8} {'名称':<6} {'竞价%':<6} {'现幅%':<6} {'昨幅%':<6} {'竞价额':<8} {'连板':<5} {'市值':<8} {'昨额':<8} {'所属行业'}  {'AI决策与流向标签'}")
+        f"{'代码':<8} {'名称':<6} {'竞价%':>6} {'现幅%':>6} {'昨幅%':>6}   {'竞价额':<8} {'连板':<4} {'市值':<8} {'昨额':<8} {'所属行业'}  {'AI决策与流向标签'}")
     print("-" * 155)
 
     count = 0
@@ -373,7 +378,6 @@ def main():
         if item['score'] < 40: continue
         count += 1
 
-        # 色彩逻辑
         c_open = Fore.RED if item['open_pct'] > 0 else (Fore.GREEN if item['open_pct'] < 0 else Fore.WHITE)
         real_pct = item.get('real_pct', 0.0)
         c_real = Fore.RED if real_pct > 0 else (Fore.GREEN if real_pct < 0 else Fore.WHITE)
@@ -394,11 +398,12 @@ def main():
 
         industry = item.get('sector_info', '未知')
 
-        # 💡 重新排列输出格式，去掉末尾多余的现额
+        # 💡 在各列之间增加了明确的空格，杜绝数据粘连 (特别是昨幅% 与 竞价额 之间)
         print(
-            f"{item['code']:<8} {item['name']:<6} {c_open}{item['open_pct']:>6.2f}{Style.RESET_ALL} "
-            f"{c_real}{real_pct:>6.2f}{Style.RESET_ALL} "
-            f"{c_yest}{yest_pct:>6.1f}{Style.RESET_ALL} "
+            f"{item['code']:<8} {item['name']:<6} "
+            f"{c_open}{item['open_pct']:>6.2f}{Style.RESET_ALL}  "
+            f"{c_real}{real_pct:>6.2f}{Style.RESET_ALL}  "
+            f"{c_yest}{yest_pct:>6.2f}{Style.RESET_ALL}   "
             f"{Fore.YELLOW}{auc_str:<8}{Style.RESET_ALL} "
             f"{boards_str:<5} {mv_str:<8} {yest_str:<8} "
             f"{industry}  {item['decision']}"
