@@ -13,9 +13,12 @@ class StockTagger:
         统一处理单只股票的所有打标逻辑
         """
         hit_tags = list(strategies_hit_tags)  # 复制一份策略命中的标签
-        code = item['code']
-        name = item['name']
+        code = item.get('code', '')
+        name = item.get('name', '')
         is_zt = item.get('is_zt', False)
+
+        # ✅ 新增：记录是否需要强制入选底层池
+        force_select = False
 
         # A. 涨停连板标签
         if is_zt:
@@ -67,7 +70,7 @@ class StockTagger:
             hit_tags.append("🎯涨停承接达标")
 
         # E. 人气/容量兜底
-        is_capacity_stock = (item['amount'] > self.top_amount_threshold) and (item['today_pct'] > 0)
+        is_capacity_stock = (item.get('amount', 0) > self.top_amount_threshold) and (item.get('today_pct', 0) > 0)
         if is_capacity_stock: hit_tags.append("★人气/容量")
 
         # F. 补充本地概念与形态
@@ -78,14 +81,44 @@ class StockTagger:
         if zt_type: hit_tags.append(f"[{zt_type}]")
         hit_tags.extend(shape_tags)
 
+        # =====================================================================
+        # G. 🔥 老龙横盘特征识别 (L大：空间压制下的老龙头破局形态)
+        # =====================================================================
+        # 1. 曾经是高标空间龙（近15个交易日内，最大连板数 >= 3）
+        recent_max_boards = item.get('recent_max_boards', 0)
+
+        # 2. 近期断板但横盘抗跌（近3天没涨停，且最高点回撤极小，比如小于15%）
+        days_since_last_zt = item.get('days_since_last_zt', 99)
+        drawdown_from_high = item.get('drawdown_from_high', 100.0)
+
+        # 3. 趋势支撑（稳在10日线上）
+        close_price = item.get('price', 0.0)  # to_dict中导出的是price
+        ma10 = item.get('ma10', 0.0)
+
+        is_old_dragon = recent_max_boards >= 3
+        is_sideways = (days_since_last_zt >= 3) and (drawdown_from_high < 15.0)
+        is_trend_intact = (close_price > ma10) and (ma10 > 0)
+
+        # 满足三个条件，打上高贵的老龙标签
+        if is_old_dragon and is_sideways and is_trend_intact:
+            hit_tags.append("[老龙横盘]")
+            force_select = True  # 触发此模式必须无脑送入底层监控池
+        # =====================================================================
+
         # 返回去重后的标签字符串和是否选中的标志
         final_tag_str = "/".join(sorted(list(set(hit_tags)))).replace('//', '/')
 
-        # 判定是否入选
+        # 判定是否入选 (✅ 增加 force_select 判定)
         is_selected = False
-        if item.get('limit_days', 0) >= 1 or is_zt: is_selected = True
-        if item.get('is_broken'): is_selected = True
-        if strategies_hit_tags: is_selected = True  # 如果策略命中了，也入选
-        if is_capacity_stock: is_selected = True
+        if force_select:
+            is_selected = True
+        elif item.get('limit_days', 0) >= 1 or is_zt:
+            is_selected = True
+        elif item.get('is_broken'):
+            is_selected = True
+        elif strategies_hit_tags:
+            is_selected = True  # 如果策略命中了，也入选
+        elif is_capacity_stock:
+            is_selected = True
 
         return final_tag_str, is_selected, zt_type

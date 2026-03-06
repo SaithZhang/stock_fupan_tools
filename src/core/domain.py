@@ -41,6 +41,14 @@ class Stock:
     is_broken: bool = False
     ths_desc: str = ""
 
+    # ==========================================
+    # 🌟 新增：老龙/趋势特征 (用于高位横盘反推战法)
+    # ==========================================
+    ma10: float = 0.0                  # 10日均线价格
+    drawdown_from_high: float = 100.0  # 距离近期最高点回撤(默认100，避免误判)
+    recent_max_boards: int = 0         # 近15天最大连板数
+    days_since_last_zt: int = 99       # 距离上一次涨停天数(默认99，避免误判)
+
     # --- 扩展槽 (用于存放未明确定义的临时数据) ---
     extra: Dict[str, Any] = field(default_factory=dict)
 
@@ -81,7 +89,7 @@ class Stock:
         """
         转换为字典，用于 DataFrame 生成或 JSON 序列化
         """
-        # asdict 会自动把 dataclass 里定义的所有字段（包括新增的 circ_mv）都转成字典
+        # asdict 会自动把 dataclass 里定义的所有字段（包括新增的老龙特征）都转成字典
         base = asdict(self)
 
         # 补充/覆盖一些计算字段
