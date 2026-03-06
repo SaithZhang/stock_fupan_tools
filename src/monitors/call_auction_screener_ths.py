@@ -1,6 +1,6 @@
 # ==============================================================================
 # 📌 F佬/Bo佬 智能盘中监控系统 (src\monitors\call_auction_screener.py)
-# v7.0 极简降噪版 - (优先级置顶 + 暴力除杂 + 弱转强聚焦)
+# v7.2 老龙破局版 - (增加“巨量滞涨”防雷 + “小弟反推老龙”点火识别)
 # ==============================================================================
 import pandas as pd
 import os
@@ -59,7 +59,7 @@ def parse_pct(val):
 
 # ================= 1. 加载盘后底库与策略池 =================
 def load_tushare_pool_and_history():
-    print(f"{Fore.CYAN}📂 [1/3] 正在加载 Tushare 盘后底库 (strategy_pool.csv)...{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}📂 [1/4] 正在加载 Tushare 盘后底库 (strategy_pool.csv)...{Style.RESET_ALL}")
     pool_path = os.path.join(PROJECT_ROOT, 'data', 'output', 'strategy_pool.csv')
     history_map, pool_map = {}, {}
 
@@ -132,7 +132,7 @@ def get_live_data():
     if not valid_files: return pd.DataFrame()
 
     latest_file = max(valid_files, key=os.path.getmtime)
-    print(f"{Fore.CYAN}📂 [2A/3] 加载竞价文件: {os.path.basename(latest_file)}...{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}📂 [2/4] 加载竞价文件: {os.path.basename(latest_file)}...{Style.RESET_ALL}")
 
     try:
         content = ""
@@ -163,8 +163,8 @@ def get_live_data():
     return pd.DataFrame()
 
 
-# ================= 3. 核心策略判定 (增加除杂与弱转强) =================
-def analyze_stock(row, history_info, pool_map, is_holding, is_focus):
+# ================= 3. 核心策略判定 (融合板块小弟一字反推) =================
+def analyze_stock(row, history_info, pool_map, is_holding, is_focus, limit_up_concepts):
     code = row.get('code')
     name = row.get('name', '')
 
@@ -209,17 +209,35 @@ def analyze_stock(row, history_info, pool_map, is_holding, is_focus):
     decision = "观察"
     fail_msg = ""
 
+    # -- 💣 防雷雷达：巨量滞涨派发陷阱 --
+    is_distribution_trap = (auc_amt >= 5000) and (-3.0 <= open_pct < 3.0) and (last_amt >= 10000)
+
     # -- 弱转强核心战法判定 --
-    # 情况A：昨天水下/微红，今天竞价抢筹高开 (>1.5%)，且竞价爆量 (>1500万)
     is_weak_to_strong = (yest_pct < 4.0 and open_pct > 1.5 and auc_amt > 1500)
-    # 情况B：昨天烂板/分歧，今天超预期高开
     if "烂板" in pool_tag or "分歧" in pool_tag:
         if open_pct > 0.0 and auc_amt > 1000:
             is_weak_to_strong = True
 
+    # -- 🔥 L大模式：老龙破局判定 (核心联动逻辑) --
+    # 解析当前个股的概念集合
+    my_concepts = set([c.strip() for c in re.split(r'[/+,-]', industry) if c.strip()])
+    # 判断是否与今天一字板的概念有交集（有小弟助攻）
+    has_limit_up_brother = bool(my_concepts.intersection(limit_up_concepts))
+
+    # 老龙横盘标的，同板块有小弟一字板，且自身高开有承接
+    is_old_dragon_breakout = ("[老龙横盘]" in pool_tag) and has_limit_up_brother and (open_pct >= 0.0) and (
+                auc_amt > 1000)
+
+    # ---------- 核心决策树 (优先级由高到低) ----------
     if open_pct > 9.8:
-        score = 80 if is_focus else 0  # 除非关注，否则一字板不看(买不到)
+        score = 80 if is_focus else 0
         decision = f"{Fore.BLUE}🔒 一字板加速{Style.RESET_ALL}"
+    elif is_distribution_trap:
+        decision = f"{Fore.RED}💣 巨量滞涨(派发大坑/快跑){Style.RESET_ALL}"
+        score = 30
+    elif is_old_dragon_breakout:
+        decision = f"{Fore.RED}🐉 老龙反推(小弟一字助攻){Style.RESET_ALL}"
+        score = 98  # 极高分，置顶显示
     elif is_weak_to_strong:
         decision = f"{Fore.MAGENTA}🚀 弱转强抢筹{Style.RESET_ALL}"
         score = 95
@@ -232,12 +250,12 @@ def analyze_stock(row, history_info, pool_map, is_holding, is_focus):
         score = 85
     elif 5.0 < open_pct < 9.8:
         decision = f"{Fore.YELLOW}⚠️ 高开缩量风险{Style.RESET_ALL}"
-        score = 60  # 这种票接力风险大，除非金额极大
+        score = 60
 
-    # 加分项
+        # 加分项
     if pool_tag: score += 10
     if is_focus: score += 15
-    if is_holding: score = 100  # 持仓满分，强制显示
+    if is_holding: score = 100  # 持仓无视分数，强制显现
 
     if code in pool_map and pool_tag:
         decision += f" {Back.MAGENTA}{Fore.WHITE}[{pool_tag}]{Style.RESET_ALL}"
@@ -251,7 +269,7 @@ def analyze_stock(row, history_info, pool_map, is_holding, is_focus):
 
 
 def main():
-    print(f"\n{Back.BLUE}{Fore.WHITE} F佬 · 盘中实时监控系统 (极简强基版 v7.0) {Style.RESET_ALL}")
+    print(f"\n{Back.BLUE}{Fore.WHITE} F佬 · 盘中实时监控系统 (极简防雷老龙版 v7.2) {Style.RESET_ALL}")
     print("=" * 145)
 
     history_map, pool_map = load_tushare_pool_and_history()
@@ -261,7 +279,28 @@ def main():
     live_df = get_live_data()
     if live_df.empty: return
 
-    print(f"{Fore.CYAN}⚙️ [3/3] 正在执行【除杂降噪】与【弱转强穿透】...{Style.RESET_ALL}")
+    # ======================================================================
+    # 🌟 关键新增：扫描全市场竞价，提取领涨板块（一字板小弟）基因
+    # ======================================================================
+    print(f"{Fore.CYAN}⚙️ [3/4] 正在扫描全市场一字板，提取领涨板块基因...{Style.RESET_ALL}")
+    limit_up_concepts = set()
+    for _, row in live_df.iterrows():
+        auc_pct_raw = row.get('竞价涨幅', row.get('涨幅', row.get('open_pct', 0)))
+        open_pct = parse_pct(auc_pct_raw)
+        if open_pct > 9.8:
+            code = clean_code(row.get('代码', row.get('code', '')))
+            info = history_map.get(code, {})
+            industry = info.get('industry', '未知')
+            if industry != '未知':
+                # 将复合概念切分为独立词条，如 "特高压/智能电网" -> ["特高压", "智能电网"]
+                for c in re.split(r'[/+,-]', industry):
+                    if c.strip():
+                        limit_up_concepts.add(c.strip())
+
+    print(f"   └── 共捕捉到 {Fore.RED}{len(limit_up_concepts)}{Style.RESET_ALL} 个涨停强势概念")
+
+    # ======================================================================
+    print(f"{Fore.CYAN}⚙️ [4/4] 正在执行【除杂降噪】与【老龙反推联动分析】...{Style.RESET_ALL}")
 
     results = []
     seen_codes = set()
@@ -280,7 +319,8 @@ def main():
             filter_stats["不在监控池"] = filter_stats.get("不在监控池", 0) + 1
             continue
 
-        res = analyze_stock(row, history_map, pool_map, is_holding, is_focus)
+        # 将整理好的强势概念集合传给处理函数
+        res = analyze_stock(row, history_map, pool_map, is_holding, is_focus, limit_up_concepts)
 
         if 'fail_reason' in res:
             reason = res['fail_reason']
@@ -306,14 +346,14 @@ def main():
         if count > 0: print(f"  - {reason}: 拦截了 {count} 只无效标的")
 
     print("=" * 145)
-    print(f"📊 精锐监控池 | 扫描总数: {len(live_df)} | {Fore.GREEN}高度聚焦弱转强与持仓{Style.RESET_ALL}")
+    print(f"📊 精锐监控池 | 扫描总数: {len(live_df)} | {Fore.GREEN}高度聚焦老龙破局、弱转强与持仓防雷{Style.RESET_ALL}")
     print(
         f"{'代码':<8} {'名称':<6} {'竞价%':>6} {'现幅%':>6} {'昨幅%':>6}   {'竞价额':<8} {'连板':<4} {'市值':<8} {'昨额':<8} {'所属行业'}  {'AI决策与流向标签'}")
     print("-" * 155)
 
     display_count = 0
     for item in results:
-        # 🔪 核心过滤：非持仓、非关注的票，置信分必须 >= 85 才配显示 (过滤掉大量鸡肋)
+        # 🔪 核心过滤：非持仓、非关注的票，置信分必须 >= 85 才配显示
         if not item['is_holding'] and not item['is_focus'] and item['score'] < 85:
             continue
 
