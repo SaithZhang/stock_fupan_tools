@@ -100,12 +100,11 @@ class TencentRealtime:
 
         for code_with_prefix, content in items:
             parts = content.split('~')
-            # 数据字段不足，跳过
+            # 数据字段不足，跳过 (至少要 50 个字段才包含量比等高级数据)
             if len(parts) < 45: continue
 
             try:
                 # --- 核心：去除前缀 (sh600000 -> 600000) ---
-                # 这样才能和 strategy_pool.csv 里的纯数字 ID 对应上
                 clean_code = code_with_prefix[2:] if code_with_prefix.startswith(
                     ('sh', 'sz', 'bj')) else code_with_prefix
 
@@ -114,14 +113,31 @@ class TencentRealtime:
                 pre_close = float(parts[4])
                 open_price = float(parts[5])
 
-                # 腾讯接口：成交量(手)，成交额(万)
-                # 我们统一转为标准单位：量(手)，额(元)
+                # 腾讯接口：成交额(万) -> 转为 元
                 amount_wan = float(parts[37]) if parts[37] else 0.0
                 amount = amount_wan * 10000
 
+                # 涨跌幅 %
                 pct = float(parts[32]) if parts[32] else 0.0
 
-                # 涨跌停价 (可选，辅助判断炸板)
+                # 🚀 补全：换手率 (parts[38])
+                turnover = 0.0
+                if len(parts) > 38 and parts[38]:
+                    try:
+                        turnover = float(parts[38])
+                    except:
+                        pass
+
+                # 🚀 补全：量比 (腾讯接口通常在 parts[49] 或附近)
+                vol_ratio = 0.0
+                if len(parts) > 49 and parts[49]:
+                    try:
+                        # 腾讯接口有时返回的是字符串类型，强转
+                        vol_ratio = float(parts[49])
+                    except:
+                        pass
+
+                # 涨跌停价
                 limit_up = float(parts[47]) if len(parts) > 47 else 0.0
                 limit_down = float(parts[48]) if len(parts) > 48 else 0.0
 
@@ -132,6 +148,8 @@ class TencentRealtime:
                     'open': open_price,
                     'pct': pct,
                     'amount': amount,
+                    'turnover': turnover,  # 🚀 新增字段
+                    'vol_ratio': vol_ratio,  # 🚀 新增字段
                     'limit_up': limit_up,
                     'limit_down': limit_down
                 }

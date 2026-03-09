@@ -1,16 +1,17 @@
 # ==============================================================================
 # 🔭 盘中监控雷达 (src/monitors/intraday_monitor.py)
-# Version: 3.1 (Market Sentiment + Multi-thread Speedup)
-# 核心功能：腾讯源实时监控 + 东方财富板块 + 策略池联动 + 异动刷新
+# Version: 3.4 (Ultimate Fix & Hot-Reload Edition)
+# 核心功能：复用 manual_focus + 动态提取标签 + 修复持仓前缀 + 兼容量能字段
 # ==============================================================================
 
 import time
 import os
 import sys
+import re
 import pandas as pd
 import requests
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from colorama import init, Fore, Style, Back
 
 # --- 环境初始化 ---
@@ -27,7 +28,6 @@ sys.path.extend([current_dir, project_root, os.path.join(project_root, 'src')])
 try:
     from src.config.settings import Config
     from src.utils.text_tools import TextUtils
-    # ⬇️ 引入新封装的 EastMoneyBlock
     from src.data.realtime import TencentRealtime, EastMoneyBlock
     from src.strategies.intraday import IntradayStrategy
 except ImportError as e:
@@ -35,53 +35,47 @@ except ImportError as e:
     sys.exit(1)
 
 
-# --- 辅助类：市场数据获取 (东方财富板块 + 腾讯指数) ---
 class MarketDataHelper:
     @staticmethod
     def get_sectors():
-        """
-        获取东方财富领涨行业板块 (Top 5)
-        URL: EastMoney Push API
-        """
         try:
             url = "http://push2.eastmoney.com/api/qt/clist/get"
             params = {
                 "pn": 1, "pz": 6, "po": 1, "np": 1,
                 "fltt": 2, "invt": 2, "fid": "f3", "fs": "m:90 t:2 f:!50",
-                "fields": "f14,f3"  # f14:名称, f3:涨幅
+                "fields": "f14,f3"
             }
             res = requests.get(url, params=params, timeout=1.5)
             data = res.json()
             if data and data.get('data'):
-                return data['data']['diff']  # list of dict
+                return data['data']['diff']
         except Exception:
             return []
         return []
 
     @staticmethod
     def get_indices_codes():
-        """返回核心指数代码 (腾讯接口格式)"""
-        # 上证指数, 深证成指, 创业板指, 科创50, 沪深300
         return ['sh000001', 'sz399001', 'sz399006', 'sh000688', 'sh000300']
 
 
 class IntradayMonitor:
     def __init__(self):
-        self.strategy_pool = {}  # {sina_code: {tag:..., name:...}}
+        self.strategy_pool = {}
         self.holdings = set()
         self.target_codes = set()
-
-        # 状态快照 {sina_code: last_price} 用于计算异动
+        self.manual_focus_pool = {}  # {sina_code: 提取的标签}
         self.price_snapshot = {}
-
-        # 线程池 (用于并发请求)
         self.executor = ThreadPoolExecutor(max_workers=3)
 
-    def load_resources(self):
-        """加载基础数据"""
-        print(f"{Fore.CYAN}📥 正在构建监控池...", end="")
+        # 强制复用原有的 manual_focus.txt
+        self.manual_focus_path = os.path.join(project_root, 'data', 'input', 'manual_focus.txt')
 
-        # 1. 持仓
+    def load_resources(self):
+        # 热更新前清空原有池子
+        self.manual_focus_pool.clear()
+        self.holdings.clear()
+
+        # 1. 加载持仓
         if os.path.exists(Config.HOLDINGS_PATH):
             raw = TextUtils.load_text_list(Config.HOLDINGS_PATH)
             for c in raw:
@@ -89,31 +83,57 @@ class IntradayMonitor:
                 self.holdings.add(sina_c)
                 self.target_codes.add(sina_c)
 
-        # 2. 策略池
+        # 2. 加载策略池
         pool_path = os.path.join(Config.OUTPUT_DIR, 'strategy_pool.csv')
         if os.path.exists(pool_path):
             try:
                 df = pd.read_csv(pool_path, dtype={'code': str})
                 for _, row in df.iterrows():
                     sina_c = TextUtils.format_sina_code(str(row['code']).zfill(6))
-
                     tag = str(row.get('tag', ''))
                     tag = tag.replace("DDD", "").replace("1进2", "").replace("/", " ").strip()
-
                     self.strategy_pool[sina_c] = {
                         'name': str(row.get('name', '')),
                         'tag': tag[:15],
-                        'limit_days': row.get('limit_days', 0),
                         'limit_up_type': str(row.get('limit_up_type', ''))
                     }
                     self.target_codes.add(sina_c)
             except Exception:
                 pass
 
-        print(f" 完成 | 监控标的: {len(self.target_codes)}")
+        # 3. 🚀 智能加载 manual_focus.txt
+        if os.path.exists(self.manual_focus_path):
+            current_section_tag = "⭐重点关注"
+            with open(self.manual_focus_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line: continue
+
+                    # 智能解析分组头，如 "# --- TACO核心 ---"
+                    if line.startswith('#'):
+                        if '---' in line:
+                            clean_header = line.replace('#', '').replace('-', '').strip()
+                            if clean_header:
+                                current_section_tag = clean_header[:8]
+                        continue
+
+                    # 匹配行首的6位股票代码
+                    match = re.search(r'^(\d{6})', line)
+                    if match:
+                        raw_code = match.group(1)
+                        sina_c = TextUtils.format_sina_code(raw_code)
+
+                        # 尝试提取行内括号里的特定备注
+                        inline_match = re.search(r'\((.*?)\)|（(.*?)）', line)
+                        if inline_match:
+                            final_tag = inline_match.group(1) or inline_match.group(2)
+                        else:
+                            final_tag = current_section_tag
+
+                        self.manual_focus_pool[sina_c] = final_tag
+                        self.target_codes.add(sina_c)
 
     def _format_amt(self, amt):
-        """格式化金额显示"""
         if amt > 1_0000_0000: return f"{amt / 1_0000_0000:.1f}亿"
         return f"{int(amt / 10000)}万"
 
@@ -138,39 +158,11 @@ class IntradayMonitor:
         if results.get('stocks'):
             df = pd.DataFrame.from_dict(results['stocks'], orient='index')
 
-            # --- 🚀 核心修复：动态兼容不同的字段名映射 ---
+            # --- 🚀 强力兼容量能字段 ---
+            if 'turnover' not in df.columns: df['turnover'] = 0.0
+            if 'vol_ratio' not in df.columns: df['vol_ratio'] = 0.0
+            if 'amount' not in df.columns: df['amount'] = 0.0
 
-            # 1. 修复【换手率】(兼容底层可能叫 turnover_rate, turnover, 换手率)
-            found_turnover = False
-            for col in ['turnover_rate', 'turnover', '换手率', '换手']:
-                if col in df.columns:
-                    df['turnover'] = df[col]
-                    found_turnover = True
-                    break
-            if not found_turnover:
-                df['turnover'] = 0.0
-
-            # 2. 修复【量比】(兼容底层可能叫 vr, vol_ratio, volume_ratio, 量比)
-            found_vr = False
-            for col in ['vr', 'vol_ratio', 'volume_ratio', '量比']:
-                if col in df.columns:
-                    df['vol_ratio'] = df[col]
-                    found_vr = True
-                    break
-            if not found_vr:
-                df['vol_ratio'] = 0.0
-
-            # 3. 修复【成交额】
-            found_amt = False
-            for col in ['amount', '成交额']:
-                if col in df.columns:
-                    df['amount'] = df[col]
-                    found_amt = True
-                    break
-            if not found_amt:
-                df['amount'] = 0.0
-
-            # 🚀 强制将文本格式转换为浮点数，防止计算报错和显示异常
             df['turnover'] = pd.to_numeric(df['turnover'], errors='coerce').fillna(0.0)
             df['vol_ratio'] = pd.to_numeric(df['vol_ratio'], errors='coerce').fillna(0.0)
             df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0.0)
@@ -184,66 +176,45 @@ class IntradayMonitor:
         return results
 
     def print_dashboard(self, indices_df, sectors_list, now_str):
-        """打印顶部仪表盘 (大盘 + 板块)"""
         os.system('cls' if os.name == 'nt' else 'clear')
-
-        # --- Header ---
         print(
-            f"{Back.BLUE}{Fore.WHITE} 🔭 盘中监控雷达 (V3.1) {Style.RESET_ALL} | Time: {now_str} | 标的: {len(self.target_codes)}")
+            f"{Back.BLUE}{Fore.WHITE} 🔭 盘中监控雷达 (V3.4 最终修复版) {Style.RESET_ALL} | Time: {now_str} | 监控池: {len(self.target_codes)}")
 
-        # --- Line 1: Indices (大盘) ---
         if indices_df is not None and not indices_df.empty:
             idx_str = ""
-            total_amt = 0
             for _, row in indices_df.iterrows():
-                # 简写名称
                 name_map = {'上证指数': '上证', '深证成指': '深证', '创业板指': '创业', '科创50': '科创',
                             '沪深300': 'HS300'}
                 name = name_map.get(row['name'], row['name'])
-
-                # 颜色
                 color = Fore.RED if row['pct'] > 0 else (Fore.GREEN if row['pct'] < 0 else Fore.WHITE)
                 idx_str += f"{name}:{color}{row['pct']:+.2f}%{Style.RESET_ALL}  "
-
-                # 累加成交额 (粗略计算全市场热度)
-                if row['amount'] > 0:
-                    total_amt += row['amount']
-
-            # 显示总金额 (近似)
-            # 注意：指数的amount通常单位不统一，需根据TencentRealtime实际返回调整。通常sh000001+sz399001包含大部分
             print(f"📊 {idx_str}")
         else:
             print("📊 指数数据加载中...")
-        # --- Line 2 & 3: Sectors (板块情绪) ---
-        if sectors_list:
-            # 这里的字段名已经统一为 'pct' 和 'name' 了，修改一下取值方式
-            sectors_list.sort(key=lambda x: x['pct'], reverse=True)
 
-            # 领涨 (前5)
+        if sectors_list:
+            sectors_list.sort(key=lambda x: x['pct'], reverse=True)
             top_gainers = sectors_list[:5]
             up_str = f"{Fore.RED}🔥 领涨: {Style.RESET_ALL}"
             for s in top_gainers:
                 up_str += f"{s['name']} {Fore.RED}{s['pct']:+.1f}%{Style.RESET_ALL}  "
-
-            # 领跌 (后5)
             top_losers = sectors_list[-5:]
             top_losers.reverse()
             down_str = f"{Fore.GREEN}❄️ 领跌: {Style.RESET_ALL}"
             for s in top_losers:
                 down_str += f"{s['name']} {Fore.GREEN}{s['pct']:+.1f}%{Style.RESET_ALL}  "
-
             print(up_str)
             print(down_str)
         else:
             print("⚠️ 板块数据加载失败")
-
         print("-" * 115)
 
     def refresh(self):
-        """执行一次全量刷新"""
+        # 🚀 每次刷新都重载，实现热更新
+        self.load_resources()
+
         if not self.target_codes: return
 
-        # 1. 并发获取数据
         data_map = self.fetch_all_data()
         df_stocks = data_map.get('stocks')
         df_indices = data_map.get('indices')
@@ -252,53 +223,72 @@ class IntradayMonitor:
         if df_stocks is None or df_stocks.empty: return
 
         now_str = datetime.now().strftime("%H:%M:%S")
-
-        # 2. 先打印顶部仪表盘
         self.print_dashboard(df_indices, list_sectors, now_str)
 
-        # 3. 处理个股逻辑
         display_items = []
         for _, row in df_stocks.iterrows():
-            code = row['sina_code']
-            pool_info = self.strategy_pool.get(code, {'name': row['name'], 'tag': '', 'limit_up_type': ''})
+            # 🚀 完美解决变量作用域和前缀匹配 Bug
+            code = str(row['sina_code'])
+            pure_code = code
 
-            # --- 策略判定 ---
+            prefix_code = pure_code
+            if pure_code.startswith('6'):
+                prefix_code = f"sh{pure_code}"
+            elif pure_code.startswith(('0', '3')):
+                prefix_code = f"sz{pure_code}"
+            elif pure_code.startswith(('4', '8')):
+                prefix_code = f"bj{pure_code}"
+
+            # 1. 匹配自定义关注池
+            manual_label = self.manual_focus_pool.get(pure_code) or self.manual_focus_pool.get(prefix_code)
+            is_focus = manual_label is not None
+
+            # 2. 匹配策略池
+            pool_info = self.strategy_pool.get(pure_code) or self.strategy_pool.get(prefix_code)
+            if not pool_info:
+                pool_info = {'name': row['name'], 'tag': manual_label if manual_label else '', 'limit_up_type': ''}
+
+            # 3. 匹配持仓 (核心防错漏)
+            is_holding = (pure_code in self.holdings) or (prefix_code in self.holdings)
+
+            # 4. 状态与异动计算
             status_str, is_zt = IntradayStrategy.check_status(
                 row['price'], row['limit_up'], row['limit_down'], row['pct']
             )
 
-            # 动态异动
             last_p = self.price_snapshot.get(code, 0)
             dynamic_alert = IntradayStrategy.check_dynamic_alert(row['price'], last_p)
             self.price_snapshot[code] = row['price']
 
             final_signal = dynamic_alert if dynamic_alert else status_str
+            extra_info = "[一字]" if pool_info['limit_up_type'] and "一字" in pool_info['limit_up_type'] else ""
 
-            # 补充信息
-            extra_info = ""
-            if pool_info['limit_up_type'] and "一字" in pool_info['limit_up_type']:
-                extra_info = "[一字]"
-
-            import re
             match = re.search(r'(\d+)板', pool_info['tag'])
             if match:
                 extra_info += f" {match.group(1)}板"
 
-            # 持仓标记
-            is_holding = code in self.holdings
-
-            # 样式处理
             name_show = pool_info['name']
-            if is_holding:
+
+            # 🚀 视觉优先级：自定义关注 > 持仓
+            if is_focus:
+                name_show = f"{Back.MAGENTA}{Fore.WHITE}{name_show}{Style.RESET_ALL}"
+                final_signal = f"{Back.MAGENTA}{Fore.WHITE}[{manual_label}]{Style.RESET_ALL} " + final_signal
+            elif is_holding:
                 name_show = f"{Fore.MAGENTA}{name_show}{Style.RESET_ALL}"
-                final_signal = f"{Fore.MAGENTA}[持]{Style.RESET_ALL} " + final_signal
+                final_signal = f"{Fore.MAGENTA}[持仓]{Style.RESET_ALL} " + final_signal
 
             pct_color = IntradayStrategy.get_pct_color(row['pct'])
+
+            # 量比高亮处理
             vr_str = f"{row['vol_ratio']:.1f}"
             if row['vol_ratio'] > 2.0: vr_str = f"{Fore.RED}{vr_str}{Style.RESET_ALL}"
 
-            # 排序权重: 持仓 > 涨停 > 涨幅绝对值
-            sort_key = (is_holding, is_zt, abs(row['pct']))
+            # 🚀 排序权重优化：关注的标的强制置顶
+            sort_key = (is_focus, is_holding, is_zt, abs(row['pct']))
+
+            raw_tag = pool_info['tag']
+            if match: raw_tag = raw_tag.replace(match.group(0), "")
+            clean_tag = raw_tag.strip()
 
             display_items.append({
                 'code': code[-6:],
@@ -311,13 +301,14 @@ class IntradayMonitor:
                 'amt_str': self._format_amt(row['amount']),
                 'signal': final_signal,
                 'extra': extra_info,
-                'tag': pool_info['tag'].replace(match.group(0) if match else "", "").strip(),
+                'tag': clean_tag,
                 'sort_key': sort_key
             })
 
-        # 4. 排序与表格显示
+        # 执行排序
         display_items.sort(key=lambda x: x['sort_key'], reverse=True)
 
+        # 打印表头
         print(
             f"{'代码':<8}{'名称':<14}{'涨幅':<10}{'现价':<8}{'换手%':<8}{'量比':<8}{'成交额':<10}{'异动/状态':<14}{'策略标签'}")
         print("-" * 115)
@@ -340,15 +331,13 @@ class IntradayMonitor:
             print(f"\n... 还有 {len(display_items) - max_rows} 只低波动标的已隐藏 ...")
 
     def run_loop(self):
-        self.load_resources()
         print("\n🚀 极速监控启动 (Tencent+EastMoney)，按 Ctrl+C 退出...")
         try:
             while True:
                 t_start = time.time()
                 self.refresh()
-                # 动态休眠：如果刷新太快(小于0.5s)，则补足时间，防止接口封禁；否则立即进行下一轮
                 elapsed = time.time() - t_start
-                sleep_time = max(2.5, 3.0 - elapsed)  # 保持约3秒一刷
+                sleep_time = max(2.5, 3.0 - elapsed)
                 time.sleep(sleep_time)
         except KeyboardInterrupt:
             print("\n👋 监控已停止")
